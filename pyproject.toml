@@ -1,0 +1,49 @@
+[project]
+name = "tinysupervisor"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Rafael Passos", email = "rafael@rcpassos.me" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "prometheus-client>=0.26.0",
+    "psutil>=7.2.2",
+    "tawazi>=0.6.2",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.ty.rules]
+possibly-unresolved-reference = "warn"
+
+[tool.ruff.lint]
+# Like Black, use double quotes for strings.
+quote-style = "double"
+
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+
+# Like Black, respect magic trailing commas.
+skip-magic-trailing-comma = false
+
+# Like Black, automatically detect the appropriate line ending.
+line-ending = "auto"
+
+# Enable all flake8-bugbear (`B`) rules, in addition to the defaults.
+extend-select = ["B"]
+
+# Avoid enforcing line-length violations (`E501`)
+ignore = ["E501"]
+
+# Avoid trying to fix flake8-bugbear (`B`) violations.
+unfixable = ["B"]
+
+# Ignore `E402` (import violations) in all `__init__.py` files, and in selected subdirectories.
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["E402"]
+"**/{tests,docs,tools}/*" = ["E402"]
+
