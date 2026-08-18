@@ -14,8 +14,8 @@ def main():
     supervisor.register(
         CronJob(
             name="heart_beat",
-            interval="10s",
-            run_until="1min",  # optional, limit time to run. Can also be numeric limit of runs
+            interval=os.environ.get("TINYSUPERVISOR_CRON_INTERVAL", "10s"),
+            run_until=os.environ.get("TINYSUPERVISOR_CRON_RUN_UNTIL", "1min"),
             command='echo "still running"',
             depends=["started_job"],
             dependency_mode="completed",  # run after the dependency is completed

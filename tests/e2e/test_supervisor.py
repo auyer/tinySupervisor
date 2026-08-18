@@ -29,6 +29,16 @@ def get_json(url: str) -> dict:
         return json.loads(resp.read().decode())
 
 
+def get_json_any(url: str) -> dict | None:
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        return json.loads(exc.read().decode())
+    except urllib.error.URLError, OSError:
+        return None
+
+
 class RunningSupervisor:
     def __init__(self, supervisor, port: int):
         self.supervisor = supervisor
@@ -221,3 +231,94 @@ def test_examples_run(example: str, tmp_path: Path):
 
     out = proc.stdout.read().decode() if proc.stdout else ""
     assert proc.returncode in (0, -15), f"unexpected exit {proc.returncode}: {out}"
+
+
+@pytest.mark.e2e
+def test_simple_dag_cron_completed_dependency(tmp_path: Path):
+    port = free_port()
+    env = {
+        "TINYSUPERVISOR_HTTP_PORT": str(port),
+        "TINYSUPERVISOR_CRON_INTERVAL": "150ms",
+        "TINYSUPERVISOR_CRON_RUN_UNTIL": "3",
+    }
+
+    script = EXAMPLES_DIR / "simple_dag.py"
+    proc = subprocess.Popen(
+        [sys.executable, str(script)],
+        env={**os.environ, **env},
+        cwd=tmp_path,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+
+    samples: list[dict] = []
+
+    try:
+
+        def heartbeat_completed() -> bool:
+            payload = get_json_any(f"http://127.0.0.1:{port}/health")
+            if payload is None:
+                return False
+            samples.append(payload)
+            return payload["processes"]["heart_beat"]["completed"] is True
+
+        wait_until(
+            heartbeat_completed,
+            timeout=20,
+            message="heart_beat should reach run_until and complete",
+        )
+
+        before = [
+            p for p in samples if p["processes"]["heart_beat"]["completed"] is False
+        ]
+        assert before, "expected samples before heart_beat completed"
+        for payload in before:
+            assert payload["processes"]["done"]["run_count"] == 0
+
+        assert samples[-1]["processes"]["heart_beat"]["run_count"] == 3
+
+        def done_ran() -> bool:
+            payload = get_json_any(f"http://127.0.0.1:{port}/health")
+            return (
+                payload is not None and payload["processes"]["done"]["run_count"] == 1
+            )
+
+        wait_until(
+            done_ran, timeout=10, message="done should run after heart_beat completes"
+        )
+
+        def confirmation_count() -> bool:
+            payload = get_json_any(f"http://127.0.0.1:{port}/health")
+            return (
+                payload is not None
+                and payload["processes"]["confirmation"]["run_count"] == 3
+            )
+
+        wait_until(
+            confirmation_count,
+            timeout=10,
+            message="confirmation should run on each cron run",
+        )
+
+        final = get_json_any(f"http://127.0.0.1:{port}/health")
+        assert final is not None
+        assert set(final["graph"]["nodes"]) == {
+            "started_job",
+            "heart_beat",
+            "confirmation",
+            "done",
+        }
+        edges = {(e["from"], e["to"], e["mode"]) for e in final["graph"]["edges"]}
+        assert edges == {
+            ("started_job", "heart_beat", "completed"),
+            ("heart_beat", "confirmation", "run_after"),
+            ("heart_beat", "done", "completed"),
+        }
+    finally:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            proc.wait(timeout=10)
