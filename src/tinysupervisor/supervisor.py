@@ -7,13 +7,13 @@ from collections.abc import Callable
 from typing import Any
 
 from tinysupervisor.errors import TaskNotFoundError
-from tinysupervisor.http import SupervisorHTTPServer
+from tinysupervisor.http import Snapshot, SupervisorHTTPServer, TaskStatus
 from tinysupervisor.metrics import Metrics
 from tinysupervisor.reconciler import Reconciler, desired_state
 from tinysupervisor.scheduler import parse_duration
 from tinysupervisor.service import Service
 from tinysupervisor.state import State
-from tinysupervisor.states import DesiredState, ProcessState
+from tinysupervisor.states import ProcessState
 from tinysupervisor.task import DependencyMode, Task
 
 _SHUTDOWN_TIMEOUT = 15.0
@@ -103,12 +103,34 @@ class Supervisor:
                 raise TaskNotFoundError(f"unknown task {name!r}")
             return entry.run_count
 
-    def statuses(self) -> dict[str, tuple[ProcessState, DesiredState]]:
+    def statuses(self) -> dict[str, TaskStatus]:
         with self._state.lock:
             return {
-                name: (entry.state, desired_state(entry, self._state.entries))
+                name: TaskStatus(
+                    current=entry.state,
+                    desired=desired_state(entry, self._state.entries),
+                    run_count=entry.run_count,
+                    completed=entry.completed,
+                )
                 for name, entry in self._state.entries.items()
             }
+
+    def graph(self) -> dict[str, Any]:
+        """Return a serializable representation of the dependency graph."""
+        with self._state.lock:
+            nodes = list(self._state.order)
+            edges: list[dict[str, str]] = []
+            for name in self._state.order:
+                task = self._state.entries[name].task
+                raw = task.dependency_mode or DependencyMode.COMPLETED
+                mode = raw.value if isinstance(raw, DependencyMode) else raw
+                for dep in task.depends:
+                    edges.append({"from": dep, "to": name, "mode": mode})
+            return {"nodes": nodes, "edges": edges}
+
+    def snapshot(self) -> Snapshot:
+        """Return a point-in-time snapshot of tasks and the dependency graph."""
+        return Snapshot(processes=self.statuses(), graph=self.graph())
 
     # -- lifecycle --------------------------------------------------------
 
@@ -119,7 +141,7 @@ class Supervisor:
 
         self._httpd = SupervisorHTTPServer(
             ("", self._http_port),
-            statuses=self.statuses,
+            snapshot=self.snapshot,
             registry=self._metrics.registry,
         )
         threading.Thread(target=self._httpd.serve_forever, daemon=True).start()

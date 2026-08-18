@@ -3,46 +3,66 @@
 import json
 from collections.abc import Callable, Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
 
 from tinysupervisor.states import DesiredState, ProcessState, is_healthy
 
-StatusProvider = Callable[[], Mapping[str, tuple[ProcessState, DesiredState]]]
+
+class TaskStatus(NamedTuple):
+    """Runtime status of a single task, exposed via the health endpoint."""
+
+    current: ProcessState
+    desired: DesiredState
+    run_count: int
+    completed: bool
 
 
-def compute_health(
-    processes: Mapping[str, tuple[ProcessState, DesiredState]],
-) -> tuple[bool, dict[str, Any]]:
+class Snapshot(NamedTuple):
+    """A point-in-time snapshot of the supervisor's tasks and dependency graph."""
+
+    processes: Mapping[str, TaskStatus]
+    graph: dict[str, Any]
+
+
+SnapshotProvider = Callable[[], Snapshot]
+
+
+def compute_health(snapshot: Snapshot) -> tuple[bool, dict[str, Any]]:
     """Build the health payload and whether every process is healthy.
 
     Returns:
         A ``(healthy, payload)`` tuple where ``payload`` has the shape
-        ``{"processes": {name: {"current": ..., "desired": ...}}}``.
+        ``{"processes": {name: {...}}, "graph": {"nodes": [...], "edges": [...]}}``.
     """
-    payload: dict[str, dict[str, str]] = {}
+    processes: dict[str, dict[str, Any]] = {}
     healthy = True
-    for name, (current, desired) in processes.items():
-        payload[name] = {"current": current.name.lower(), "desired": desired.value}
-        if not is_healthy(current, desired):
+    for name, status in snapshot.processes.items():
+        processes[name] = {
+            "current": status.current.name.lower(),
+            "desired": status.desired.value,
+            "run_count": status.run_count,
+            "completed": status.completed,
+        }
+        if not is_healthy(status.current, status.desired):
             healthy = False
-    return healthy, {"processes": payload}
+    return healthy, {"processes": processes, "graph": snapshot.graph}
 
 
 class SupervisorHTTPServer(ThreadingHTTPServer):
-    """Threaded HTTP server with access to status and metrics providers."""
+    """Threaded HTTP server with access to status, graph and metrics providers."""
 
     daemon_threads = True
 
     def __init__(
         self,
         address: tuple[str, int],
-        statuses: StatusProvider,
+        snapshot: SnapshotProvider,
         registry: CollectorRegistry,
     ) -> None:
         super().__init__(address, HealthCheckRequestHandler)
-        self.statuses = statuses
+        self.snapshot = snapshot
         self.registry = registry
 
 
@@ -57,7 +77,7 @@ class HealthCheckRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_health(self) -> None:
         server = cast(SupervisorHTTPServer, self.server)
-        healthy, payload = compute_health(server.statuses())
+        healthy, payload = compute_health(server.snapshot())
         status = 200 if healthy else 400
         body = json.dumps(payload).encode()
         self.send_response(status)
