@@ -1,0 +1,7 @@
+stages:
+  - lint
+  - test
+
+include:
+  - local: .gitlab-ci/python-lint.yml
+  - local: .gitlab-ci/python-tests.yml

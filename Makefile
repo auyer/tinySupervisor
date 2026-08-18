@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-e2e lint format format-check typecheck check
+.PHONY: test test-unit test-e2e lint format format-check typecheck all check
 
 test:
 	uv run pytest
@@ -21,4 +21,6 @@ format-check:
 typecheck:
 	uv run ty check src tests
 
-check: test lint format-check typecheck
+check: lint format-check typecheck
+
+all: check test

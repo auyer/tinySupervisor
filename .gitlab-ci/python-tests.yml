@@ -1,0 +1,10 @@
+python-tests:
+  stage: test
+  image: python:3.14-slim
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq curl make
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+    - export PATH="$HOME/.local/bin:$PATH"
+  script:
+    - uv sync --locked --all-extras --dev
+    - make test
