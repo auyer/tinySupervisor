@@ -1,6 +1,6 @@
 import os
 
-from tinysupervisor import CronJob, Job, Process, Service, init_supervisor
+from tinysupervisor import CronJob, Job, Job, Service, init_supervisor
 
 
 def render_index(file_names: list[str]) -> str:
@@ -36,9 +36,9 @@ def write(file_name: str, content: str):
 
 
 def index_folder_runner(folder_name):
-    files = Process.run(f"ls {folder_name}")
+    files = Job.run(f"ls {folder_name}")
     index = render_index(files)
-    Process.run(write, args=["index.html", index])
+    Job.run(write, args=["index.html", index])
 
 
 def server(folder_name):
