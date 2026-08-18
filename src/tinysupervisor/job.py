@@ -27,6 +27,7 @@ class Job(Task):
         startsecs: float = 1.0,
         startretries: int = 3,
         context: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> None:
         super().__init__(
             name=name,
@@ -41,4 +42,5 @@ class Job(Task):
             startsecs=startsecs,
             startretries=startretries,
             context=context,
+            env=env,
         )

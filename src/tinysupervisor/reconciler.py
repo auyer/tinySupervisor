@@ -95,7 +95,9 @@ class Reconciler:
 
     def _start(self, entry: TaskEntry, now: float) -> None:
         task = entry.task
-        entry.handle = Process(task.runnable, task.args, task.kwargs, task.context)
+        entry.handle = Process(
+            task.runnable, task.args, task.kwargs, task.context, task.env
+        )
         entry.handle.start()
         entry.last_start = now
         entry.started = True

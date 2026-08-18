@@ -1,5 +1,6 @@
 """Process execution: running system processes and Python callables."""
 
+import os
 import subprocess
 import threading
 from typing import Any
@@ -25,11 +26,13 @@ class Process:
         args: list[Any] | None = None,
         kwargs: dict[str, Any] | None = None,
         context: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> None:
         self.runnable = runnable
         self.args = args or []
         self.kwargs = kwargs or {}
         self.context = context
+        self.env = env
         self._proc: subprocess.Popen[Any] | None = None
         self._thread: threading.Thread | None = None
 
@@ -38,25 +41,42 @@ class Process:
         executable: Executable,
         args: list[Any] | None = None,
         kwargs: dict[str, Any] | None = None,
+        env: dict[str, str] | None = None,
     ) -> Any:
         """Run ``executable`` synchronously and return its output/result.
 
         If ``executable`` is a string it is executed as a shell command and
         its stdout lines are returned as a list. If it is a callable, it is
         invoked with ``args``/``kwargs`` and its return value is returned.
+
+        ``env`` is an optional dict of environment variables.  When set the
+        child process or callable inherits the parent environment with the
+        given values overlaid.
         """
         if isinstance(executable, str):
-            return Process._run_command(executable)
+            return Process._run_command(executable, env=env)
         if callable(executable):
-            return executable(*(args or []), **(kwargs or {}))
+            old: dict[str, str | None] | None = None
+            if env:
+                old = {k: os.environ.get(k) for k in env}
+                os.environ.update(env)
+            try:
+                return executable(*(args or []), **(kwargs or {}))
+            finally:
+                if old is not None:
+                    for k, v in old.items():
+                        if v is None:
+                            os.environ.pop(k, None)
+                        else:
+                            os.environ[k] = v
         raise TypeError(
             f"expected a command string or callable, got {type(executable)!r}"
         )
 
     @staticmethod
-    def _run_command(command: str) -> list[str]:
+    def _run_command(command: str, env: dict[str, str] | None = None) -> list[str]:
         result = subprocess.run(
-            command, shell=True, capture_output=True, text=True, check=False
+            command, shell=True, capture_output=True, text=True, check=False, env=env
         )
         if result.returncode != 0:
             raise ProcessError(
@@ -76,12 +96,30 @@ class Process:
                 cwd=self.context,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=self.env,
             )
         elif callable(self.runnable):
+            target = self.runnable
+            if self.env:
+                env = self.env
+                fn = self.runnable
+
+                def _target() -> None:
+                    old = {k: os.environ.get(k) for k in env}
+                    os.environ.update(env)
+                    try:
+                        fn(*self.args, **self.kwargs)
+                    finally:
+                        for k, v in old.items():
+                            if v is None:
+                                os.environ.pop(k, None)
+                            else:
+                                os.environ[k] = v
+
+                target = _target
             self._thread = threading.Thread(
-                target=self.runnable,
-                args=self.args,
-                kwargs=self.kwargs,
+                target=target,
+                args=(),
                 daemon=True,
             )
             self._thread.start()

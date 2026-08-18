@@ -25,6 +25,7 @@ class Service(Task):
         startsecs: float = 1.0,
         startretries: int = 3,
         context: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> None:
         super().__init__(
             name=name,
@@ -40,6 +41,7 @@ class Service(Task):
             startsecs=startsecs,
             startretries=startretries,
             context=context,
+            env=env,
         )
 
     @classmethod
@@ -63,6 +65,7 @@ class Service(Task):
             args=self.args,
             kwargs=self.kwargs,
             context=self.context,
+            env=self.env,
         )
         handle.start()
         handle.wait()

@@ -189,6 +189,45 @@ supervisor.auto_dependency_mode(mode="register_order", wait_for="start")
 # Each task registered after this call depends on the previous one (start mode).
 ```
 
+## Environment variables
+
+Pass environment variables to a task with the `env` parameter. The child
+process inherits the parent environment with the given values overlaid:
+
+```python
+# runnable: env
+import os
+import sys
+
+from tinysupervisor import Job, init_supervisor
+
+
+def main() -> int:
+    supervisor = init_supervisor()
+    supervisor.set_http_port(int(os.environ.get("TINYSUPERVISOR_HTTP_PORT", "8081")))
+    supervisor.set_heartbeat_interval("100ms")
+
+    supervisor.register(
+        Job(
+            name="greet",
+            command="echo Hello $GREETING",
+            env={"GREETING": "World"},
+        )
+    )
+
+    return supervisor.start()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+Works with both shell commands and Python callables:
+
+```python
+Job(name="work", executable=my_func, env={"API_KEY": "abc123"})
+```
+
 ## Observability
 
 The supervisor exposes an HTTP server with three endpoints:

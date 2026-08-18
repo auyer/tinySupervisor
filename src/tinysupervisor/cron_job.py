@@ -31,6 +31,7 @@ class CronJob(Task):
         startsecs: float = 1.0,
         startretries: int = 3,
         context: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> None:
         super().__init__(
             name=name,
@@ -45,6 +46,7 @@ class CronJob(Task):
             startsecs=startsecs,
             startretries=startretries,
             context=context,
+            env=env,
         )
         self.interval: str | int | float = interval
         self.run_until: str | int | None = run_until

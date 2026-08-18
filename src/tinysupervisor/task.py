@@ -41,6 +41,7 @@ class Task:
     startsecs: float = 1.0
     startretries: int = 3
     context: str | None = None
+    env: dict[str, str] | None = None
     observed: dict[str, int] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
