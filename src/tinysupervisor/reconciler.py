@@ -220,6 +220,12 @@ class Reconciler:
             return
 
         if not dependencies_ready(task, self.state.entries):
+            if task.dependency_mode is DependencyMode.RUN_AFTER and all(
+                self.state.entries[dep].completed for dep in task.depends
+            ):
+                entry.completed = True
+                self._transition(entry, ProcessState.COMPLETED)
+                self._logger.info(f"Task '{task.name}' completed")
             return
 
         if task.dependency_mode is DependencyMode.RUN_AFTER:

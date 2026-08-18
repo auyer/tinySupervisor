@@ -1,6 +1,8 @@
 from tinysupervisor.job import Job
-from tinysupervisor.reconciler import dependencies_ready
-from tinysupervisor.state import TaskEntry
+from tinysupervisor.logger import Logger, Verbosity
+from tinysupervisor.reconciler import Reconciler, dependencies_ready
+from tinysupervisor.state import State, TaskEntry
+from tinysupervisor.states import ProcessState
 from tinysupervisor.task import DependencyMode
 
 
@@ -49,3 +51,53 @@ def test_run_after_triggers_on_new_dep_run():
     job.observed["a"] = 1
     assert dependencies_ready(job, {"a": entry(run_count=2)}) is True
     assert dependencies_ready(job, {"a": entry(run_count=1)}) is False
+
+
+def test_run_after_job_completes_when_dep_completed():
+    state = State()
+    dep = Job(name="a", command="echo")
+    job = Job(
+        name="b",
+        command="echo",
+        depends=["a"],
+        dependency_mode=DependencyMode.RUN_AFTER,
+    )
+    state.add(dep)
+    state.add(job)
+
+    with state.lock:
+        state.entries["a"].completed = True
+        state.entries["a"].run_count = 1
+        state.entries["b"].state = ProcessState.WAITING
+        state.entries["b"].run_count = 1
+        state.entries["b"].task.observed["a"] = 1
+
+    rec = Reconciler(state, Logger(Verbosity.SILENT))
+    with state.lock:
+        rec._reconcile_job(state.entries["b"], 0.0)
+        assert state.entries["b"].state is ProcessState.COMPLETED
+        assert state.entries["b"].completed is True
+
+
+def test_run_after_job_stays_waiting_when_dep_not_completed():
+    state = State()
+    dep = Job(name="a", command="echo")
+    job = Job(
+        name="b",
+        command="echo",
+        depends=["a"],
+        dependency_mode=DependencyMode.RUN_AFTER,
+    )
+    state.add(dep)
+    state.add(job)
+
+    with state.lock:
+        state.entries["a"].run_count = 1
+        state.entries["b"].state = ProcessState.WAITING
+        state.entries["b"].run_count = 1
+        state.entries["b"].task.observed["a"] = 1
+
+    rec = Reconciler(state, Logger(Verbosity.SILENT))
+    with state.lock:
+        rec._reconcile_job(state.entries["b"], 0.0)
+        assert state.entries["b"].state is ProcessState.WAITING

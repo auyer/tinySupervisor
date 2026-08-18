@@ -390,6 +390,19 @@ def test_simple_dag_cron_completed_dependency(tmp_path: Path):
             message="confirmation should run on each cron run",
         )
 
+        def confirmation_completed() -> bool:
+            payload = get_json_any(f"http://127.0.0.1:{port}/state")
+            return (
+                payload is not None
+                and payload["processes"]["confirmation"]["completed"] is True
+            )
+
+        wait_until(
+            confirmation_completed,
+            timeout=10,
+            message="confirmation should complete when heart_beat completes",
+        )
+
         final = get_json_any(f"http://127.0.0.1:{port}/state")
         assert final is not None
         assert set(final["graph"]["nodes"]) == {
