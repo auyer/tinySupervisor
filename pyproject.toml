@@ -15,6 +15,11 @@ dependencies = [
     "tawazi>=0.6.2",
 ]
 
+[project.urls]
+GitLab = "https://gitlab.com/auyer/tinySupervisor"
+CodeBerg = "https://codeberg.org/auyer/tinySupervisor"
+GitHub = "https://github.com/auyer/tinySupervisor"
+
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]
 build-backend = "uv_build"
@@ -68,4 +73,5 @@ markers = [
     "e2e: end-to-end tests that exercise the full supervisor lifecycle (real processes)",
 ]
 timeout = 60
+
 
