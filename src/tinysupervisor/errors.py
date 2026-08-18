@@ -1,5 +1,6 @@
 """Exceptions raised by tinySupervisor."""
 
+
 class TinySupervisorError(Exception):
     """Base class for all tinySupervisor errors."""
 

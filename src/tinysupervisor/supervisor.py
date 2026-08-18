@@ -8,6 +8,7 @@ from typing import Any
 
 from tinysupervisor.errors import TaskNotFoundError
 from tinysupervisor.http import Snapshot, SupervisorHTTPServer, TaskStatus
+from tinysupervisor.logger import Logger, Verbosity
 from tinysupervisor.metrics import Metrics
 from tinysupervisor.reconciler import Reconciler, desired_state
 from tinysupervisor.scheduler import parse_duration
@@ -22,9 +23,10 @@ _SHUTDOWN_TIMEOUT = 15.0
 class Supervisor:
     """Registers tasks and reconciles their state on a heartbeat interval."""
 
-    def __init__(self) -> None:
+    def __init__(self, verbosity: Verbosity | str = Verbosity.INFO) -> None:
         self._state = State()
-        self._reconciler = Reconciler(self._state)
+        self._logger = Logger(verbosity)
+        self._reconciler = Reconciler(self._state, self._logger)
         self._metrics = Metrics()
         self._http_port = 8081
         self._heartbeat = 1.0
@@ -209,6 +211,6 @@ class Supervisor:
                 pass
 
 
-def init_supervisor() -> Supervisor:
+def init_supervisor(verbosity: Verbosity | str = Verbosity.INFO) -> Supervisor:
     """Create a new Supervisor."""
-    return Supervisor()
+    return Supervisor(verbosity)

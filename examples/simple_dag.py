@@ -4,7 +4,9 @@ from tinysupervisor import CronJob, Job, init_supervisor
 
 
 def main():
-    supervisor = init_supervisor()
+    supervisor = init_supervisor(
+        verbosity=os.environ.get("TINYSUPERVISOR_VERBOSITY", "info")
+    )
     # define task dependency each register task should depende of the previous,
     # they should only need them to start, not complete
     supervisor.auto_dependency_mode(mode="register_order", wait_for="start")

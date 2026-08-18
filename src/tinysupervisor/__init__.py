@@ -2,6 +2,7 @@
 
 from tinysupervisor.cron_job import CronJob
 from tinysupervisor.job import Job
+from tinysupervisor.logger import Verbosity
 from tinysupervisor.process import Process
 from tinysupervisor.service import Service
 from tinysupervisor.states import DesiredState, ProcessState
@@ -15,6 +16,7 @@ __all__ = [
     "ProcessState",
     "Service",
     "Supervisor",
+    "Verbosity",
     "init_supervisor",
 ]
 

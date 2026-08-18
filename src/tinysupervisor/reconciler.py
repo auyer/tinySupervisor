@@ -3,6 +3,7 @@
 import time
 from collections.abc import Mapping
 
+from tinysupervisor.logger import Logger
 from tinysupervisor.process import Process
 from tinysupervisor.state import State, TaskEntry
 from tinysupervisor.states import DesiredState, ProcessState
@@ -52,8 +53,9 @@ def desired_state(entry: TaskEntry, entries: Mapping[str, TaskEntry]) -> Desired
 class Reconciler:
     """Drives tasks toward their desired state each heartbeat."""
 
-    def __init__(self, state: State) -> None:
+    def __init__(self, state: State, logger: Logger) -> None:
         self.state = state
+        self._logger = logger
         self._stopping = False
 
     def set_stopping(self, stopping: bool = True) -> None:
@@ -77,13 +79,28 @@ class Reconciler:
 
     # -- helpers ----------------------------------------------------------
 
+    def _transition(self, entry: TaskEntry, new_state: ProcessState) -> None:
+        old = entry.state
+        if old is new_state:
+            return
+        self._logger.debug(
+            f"Task '{entry.task.name}' state: {old.name} -> {new_state.name}"
+        )
+        entry.state = new_state
+
     def _start(self, entry: TaskEntry, now: float) -> None:
         task = entry.task
         entry.handle = Process(task.runnable, task.args, task.kwargs, task.context)
         entry.handle.start()
         entry.last_start = now
         entry.started = True
-        entry.state = ProcessState.STARTING
+        self._transition(entry, ProcessState.STARTING)
+        if entry.run_count > 0:
+            self._logger.info(
+                f"Starting task '{task.name}' (run #{entry.run_count + 1})"
+            )
+        else:
+            self._logger.info(f"Starting task '{task.name}'")
 
     def _finish_run(self, entry: TaskEntry) -> None:
         task = entry.task
@@ -91,17 +108,18 @@ class Reconciler:
         for dep in task.depends:
             task.observed[dep] = self.state.entries[dep].run_count
         if task.kind == "job" and task.dependency_mode is DependencyMode.RUN_AFTER:
-            entry.state = ProcessState.WAITING
+            self._transition(entry, ProcessState.WAITING)
         else:
             entry.completed = True
-            entry.state = ProcessState.COMPLETED
+            self._transition(entry, ProcessState.COMPLETED)
+            self._logger.info(f"Task '{task.name}' completed")
 
     # -- stop -------------------------------------------------------------
 
     def _reconcile_stop(self, entry: TaskEntry, now: float) -> None:
         st = entry.state
         if st in (ProcessState.COMPLETED, ProcessState.EXITED, ProcessState.FATAL):
-            entry.state = ProcessState.COMPLETED
+            self._transition(entry, ProcessState.COMPLETED)
             entry.completed = True
             entry.handle = None
             return
@@ -111,7 +129,7 @@ class Reconciler:
             ProcessState.BACKOFF,
             ProcessState.WAITING,
         ):
-            entry.state = ProcessState.STOPPING
+            self._transition(entry, ProcessState.STOPPING)
             entry.delay_until = now + _STOP_GRACE
             return
         if st == ProcessState.STOPPING:
@@ -120,9 +138,10 @@ class Reconciler:
                 if now >= entry.delay_until:
                     handle.terminate(force=True)
             else:
-                entry.state = ProcessState.COMPLETED
+                self._transition(entry, ProcessState.COMPLETED)
                 entry.completed = True
                 entry.handle = None
+                self._logger.info(f"Task '{entry.task.name}' stopped")
 
     # -- service ----------------------------------------------------------
 
@@ -145,29 +164,31 @@ class Reconciler:
                 return
             if handle.is_alive():
                 if now - entry.last_start >= task.startsecs:
-                    entry.state = ProcessState.RUNNING
+                    self._transition(entry, ProcessState.RUNNING)
+                    self._logger.info(f"Task '{task.name}' started")
                     if entry.run_count == 0:
                         entry.run_count += 1
             else:
                 entry.handle = None
                 if now - entry.last_start < task.startsecs:
-                    entry.state = ProcessState.BACKOFF
+                    self._transition(entry, ProcessState.BACKOFF)
                     entry.backoff_count += 1
                     entry.delay_until = now + entry.backoff_count
                 else:
-                    entry.state = ProcessState.EXITED
+                    self._transition(entry, ProcessState.EXITED)
             return
 
         if st == ProcessState.RUNNING:
             handle = entry.handle
             if handle is not None and not handle.is_alive():
                 entry.handle = None
-                entry.state = ProcessState.EXITED
+                self._transition(entry, ProcessState.EXITED)
             return
 
         if st == ProcessState.BACKOFF:
             if entry.backoff_count > task.startretries:
-                entry.state = ProcessState.FATAL
+                self._transition(entry, ProcessState.FATAL)
+                self._logger.info(f"Task '{task.name}' failed")
             elif now >= entry.delay_until:
                 self._start(entry, now)
             return
@@ -191,7 +212,8 @@ class Reconciler:
                 if code == 0:
                     self._finish_run(entry)
                 else:
-                    entry.state = ProcessState.FATAL
+                    self._transition(entry, ProcessState.FATAL)
+                    self._logger.info(f"Task '{task.name}' failed")
             return
 
         if st == ProcessState.FATAL:
@@ -223,11 +245,13 @@ class Reconciler:
             and entry.run_count >= entry.run_until_count
         ):
             entry.completed = True
-            entry.state = ProcessState.COMPLETED
+            self._transition(entry, ProcessState.COMPLETED)
+            self._logger.info(f"Task '{task.name}' completed")
             return
         if entry.until_deadline is not None and now >= entry.until_deadline:
             entry.completed = True
-            entry.state = ProcessState.COMPLETED
+            self._transition(entry, ProcessState.COMPLETED)
+            self._logger.info(f"Task '{task.name}' completed")
             return
 
         if st == ProcessState.STARTING:
@@ -241,10 +265,14 @@ class Reconciler:
                     entry.run_count += 1
                     for dep in task.depends:
                         task.observed[dep] = self.state.entries[dep].run_count
-                    entry.state = ProcessState.WAITING
+                    self._transition(entry, ProcessState.WAITING)
+                    self._logger.info(
+                        f"Task '{task.name}' run finished (run #{entry.run_count})"
+                    )
                     entry.next_run = now + (entry.interval_s or 1.0)
                 else:
-                    entry.state = ProcessState.FATAL
+                    self._transition(entry, ProcessState.FATAL)
+                    self._logger.info(f"Task '{task.name}' failed")
             return
 
         if st == ProcessState.FATAL:

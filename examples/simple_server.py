@@ -48,7 +48,9 @@ def server(folder_name):
 
 
 def main():
-    supervisor = init_supervisor()
+    supervisor = init_supervisor(
+        verbosity=os.environ.get("TINYSUPERVISOR_VERBOSITY", "info")
+    )
 
     supervisor.register(Job(name="init_folder", command="mkdir -p output"))
     supervisor.register(
