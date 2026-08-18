@@ -56,9 +56,9 @@ class Service(Task):
 
     def start(self) -> None:
         """Imperatively run the service (blocking) without the supervisor registry."""
-        from tinysupervisor.process import ProcessHandle
+        from tinysupervisor.process import Process
 
-        handle = ProcessHandle(
+        handle = Process(
             runnable=self.runnable,
             args=self.args,
             kwargs=self.kwargs,

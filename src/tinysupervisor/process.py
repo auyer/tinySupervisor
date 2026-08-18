@@ -1,4 +1,4 @@
-"""Helpers to start system processes and Python callables."""
+"""Process execution: running system processes and Python callables."""
 
 import subprocess
 import threading
@@ -10,8 +10,14 @@ from tinysupervisor.errors import ProcessError
 from tinysupervisor.task import Executable
 
 
-class ProcessHandle:
-    """Manages the lifecycle of a running task (subprocess or thread)."""
+class Process:
+    """A process to be executed.
+
+    A ``Process`` wraps either a shell command (string) or a Python callable
+    and manages its execution. It is the low-level execution primitive used by
+    the supervisor; ``Job``, ``Service`` and ``CronJob`` are declarative task
+    types built on top of it.
+    """
 
     def __init__(
         self,
@@ -27,7 +33,40 @@ class ProcessHandle:
         self._proc: subprocess.Popen[Any] | None = None
         self._thread: threading.Thread | None = None
 
+    @staticmethod
+    def run(
+        executable: Executable,
+        args: list[Any] | None = None,
+        kwargs: dict[str, Any] | None = None,
+    ) -> Any:
+        """Run ``executable`` synchronously and return its output/result.
+
+        If ``executable`` is a string it is executed as a shell command and
+        its stdout lines are returned as a list. If it is a callable, it is
+        invoked with ``args``/``kwargs`` and its return value is returned.
+        """
+        if isinstance(executable, str):
+            return Process._run_command(executable)
+        if callable(executable):
+            return executable(*(args or []), **(kwargs or {}))
+        raise TypeError(
+            f"expected a command string or callable, got {type(executable)!r}"
+        )
+
+    @staticmethod
+    def _run_command(command: str) -> list[str]:
+        result = subprocess.run(
+            command, shell=True, capture_output=True, text=True, check=False
+        )
+        if result.returncode != 0:
+            raise ProcessError(
+                f"command {command!r} failed with exit code {result.returncode}: "
+                f"{result.stderr.strip()}"
+            )
+        return result.stdout.splitlines()
+
     def start(self) -> None:
+        """Start the process asynchronously (subprocess or background thread)."""
         if self.runnable is None:
             raise ProcessError("no command or callable provided")
         if isinstance(self.runnable, str):

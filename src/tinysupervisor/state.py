@@ -5,7 +5,7 @@ from threading import RLock
 
 from tinysupervisor.errors import DuplicateTaskError, UnknownDependencyError
 from tinysupervisor.graph import DependencyGraph
-from tinysupervisor.process import ProcessHandle
+from tinysupervisor.process import Process
 from tinysupervisor.scheduler import parse_duration
 from tinysupervisor.states import ProcessState
 from tinysupervisor.task import Task
@@ -20,7 +20,7 @@ class TaskEntry:
     run_count: int = 0
     started: bool = False
     completed: bool = False
-    handle: ProcessHandle | None = None
+    handle: Process | None = None
     last_start: float = 0.0
     backoff_count: int = 0
     delay_until: float = 0.0
@@ -67,7 +67,10 @@ class State:
             if isinstance(run_until, int):
                 entry.run_until_count = run_until
             elif isinstance(run_until, str):
-                entry.run_until_duration = parse_duration(run_until)
+                if run_until.isdigit():
+                    entry.run_until_count = int(run_until)
+                else:
+                    entry.run_until_duration = parse_duration(run_until)
 
     def _rebuild_graph(self) -> None:
         depends = {name: self.entries[name].task.depends for name in self.order}

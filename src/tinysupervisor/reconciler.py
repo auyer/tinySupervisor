@@ -3,7 +3,7 @@
 import time
 from collections.abc import Mapping
 
-from tinysupervisor.process import ProcessHandle
+from tinysupervisor.process import Process
 from tinysupervisor.state import State, TaskEntry
 from tinysupervisor.states import DesiredState, ProcessState
 from tinysupervisor.task import DependencyMode, Task
@@ -79,9 +79,7 @@ class Reconciler:
 
     def _start(self, entry: TaskEntry, now: float) -> None:
         task = entry.task
-        entry.handle = ProcessHandle(
-            task.runnable, task.args, task.kwargs, task.context
-        )
+        entry.handle = Process(task.runnable, task.args, task.kwargs, task.context)
         entry.handle.start()
         entry.last_start = now
         entry.started = True
