@@ -1,13 +1,14 @@
 [project]
 name = "tinysupervisor"
 version = "0.1.0"
-description = "Add your description here"
+description = "A process supervisor in Python, with DAG-like dependencies"
 readme = "README.md"
 authors = [
     { name = "Rafael Passos", email = "rafael@rcpassos.me" }
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "networkx>=3.6.1",
     "prometheus-client>=0.26.0",
     "psutil>=7.2.2",
     "tawazi>=0.6.2",
@@ -20,7 +21,10 @@ build-backend = "uv_build"
 [tool.ty.rules]
 possibly-unresolved-reference = "warn"
 
-[tool.ruff.lint]
+[tool.ruff]
+exclude = [".venv"]
+
+[tool.ruff.format]
 # Like Black, use double quotes for strings.
 quote-style = "double"
 
@@ -33,6 +37,7 @@ skip-magic-trailing-comma = false
 # Like Black, automatically detect the appropriate line ending.
 line-ending = "auto"
 
+[tool.ruff.lint]
 # Enable all flake8-bugbear (`B`) rules, in addition to the defaults.
 extend-select = ["B"]
 
@@ -46,4 +51,19 @@ unfixable = ["B"]
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["E402"]
 "**/{tests,docs,tools}/*" = ["E402"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-timeout>=2.3.1",
+    "ruff>=0.16.3",
+    "ty>=0.0.72",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "e2e: end-to-end tests that exercise the full supervisor lifecycle (real processes)",
+]
+timeout = 60
 
