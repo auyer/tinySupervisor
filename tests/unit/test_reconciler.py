@@ -1,6 +1,9 @@
+import time
+
 from tinysupervisor.job import Job
 from tinysupervisor.logger import Logger, Verbosity
 from tinysupervisor.reconciler import Reconciler, dependencies_ready
+from tinysupervisor.service import Service
 from tinysupervisor.state import State, TaskEntry
 from tinysupervisor.states import ProcessState
 from tinysupervisor.task import DependencyMode
@@ -101,3 +104,117 @@ def test_run_after_job_stays_waiting_when_dep_not_completed():
     with state.lock:
         rec._reconcile_job(state.entries["b"], 0.0)
         assert state.entries["b"].state is ProcessState.WAITING
+
+
+# -- WAITING -> FATAL when dependency fails ----------------------------------
+
+
+def test_waiting_job_fails_when_upstream_fatal():
+    """Direct logic: upstream set to FATAL, downstream should go FATAL."""
+    state = State()
+    state.add(Job(name="up", command="echo"))
+    state.add(
+        Job(
+            name="down",
+            command="echo",
+            depends=["up"],
+            dependency_mode=DependencyMode.COMPLETED,
+        )
+    )
+
+    with state.lock:
+        state.entries["up"].state = ProcessState.FATAL
+        state.entries["down"].state = ProcessState.WAITING
+
+    rec = Reconciler(state, Logger(Verbosity.SILENT))
+    with state.lock:
+        rec._reconcile_job(state.entries["down"], 0.0)
+
+    with state.lock:
+        assert state.entries["down"].state is ProcessState.FATAL
+
+
+def test_waiting_job_fails_when_upstream_fatal_reconcile_loop():
+    """Real upstream: exit 1 job (never reaches RUNNING) drives downstream to FATAL."""
+    state = State()
+    state.add(Job(name="up", command="exit 1"))
+    state.add(
+        Job(
+            name="down",
+            command="echo",
+            depends=["up"],
+            dependency_mode=DependencyMode.COMPLETED,
+        )
+    )
+
+    rec = Reconciler(state, Logger(Verbosity.SILENT))
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        rec.reconcile()
+        with state.lock:
+            if state.entries["up"].state is ProcessState.FATAL:
+                break
+        time.sleep(0.05)
+
+    with state.lock:
+        assert state.entries["up"].state is ProcessState.FATAL
+        assert state.entries["down"].state is ProcessState.FATAL
+
+
+def test_waiting_service_fails_when_upstream_fatal():
+    """Upstream Service exits before startsecs with startretries=0 -> FATAL before RUNNING."""
+    state = State()
+    state.add(Service(name="up", command="exit 1", startsecs=1.0, startretries=0))
+    state.add(
+        Job(
+            name="down",
+            command="echo",
+            depends=["up"],
+            dependency_mode=DependencyMode.COMPLETED,
+        )
+    )
+
+    rec = Reconciler(state, Logger(Verbosity.SILENT))
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        rec.reconcile()
+        with state.lock:
+            if state.entries["up"].state is ProcessState.FATAL:
+                break
+        time.sleep(0.05)
+
+    with state.lock:
+        assert state.entries["up"].state is ProcessState.FATAL
+        assert state.entries["down"].state is ProcessState.FATAL
+
+
+def test_waiting_job_stays_waiting_while_upstream_running():
+    """Negative: upstream not FATAL -> downstream stays WAITING."""
+    state = State()
+    state.add(Job(name="up", command="sleep 30"))
+    state.add(
+        Job(
+            name="down",
+            command="echo",
+            depends=["up"],
+            dependency_mode=DependencyMode.COMPLETED,
+        )
+    )
+
+    rec = Reconciler(state, Logger(Verbosity.SILENT))
+    for _ in range(5):
+        rec.reconcile()
+        time.sleep(0.02)
+
+    with state.lock:
+        assert state.entries["up"].state in (
+            ProcessState.WAITING,
+            ProcessState.STARTING,
+            ProcessState.RUNNING,
+        )
+        assert state.entries["down"].state is ProcessState.WAITING
+
+    with state.lock:
+        handle = state.entries["up"].handle
+    if handle is not None and handle.is_alive():
+        handle.terminate(force=True)

@@ -205,7 +205,7 @@ def test_metrics_endpoint():
 @pytest.mark.e2e
 def test_health_returns_400_when_desired_running_but_exited():
     port = free_port()
-    sup = init_supervisor()
+    sup = init_supervisor(keep_running=True)
     sup.set_http_port(port)
     sup.set_heartbeat_interval("100ms")
     sup.register(Service(name="crashy", command="exit 1"))
@@ -323,27 +323,42 @@ def test_simple_server_serves_created_file(tmp_path: Path):
 
 
 @pytest.mark.e2e
-def test_simple_dag_cron_completed_dependency(tmp_path: Path):
+def test_simple_dag_cron_completed_dependency():
     port = free_port()
-    env = {
-        "TINYSUPERVISOR_HTTP_PORT": str(port),
-        "TINYSUPERVISOR_CRON_INTERVAL": "150ms",
-        "TINYSUPERVISOR_CRON_RUN_UNTIL": "3",
-    }
-
-    script = EXAMPLES_DIR / "simple_dag.py"
-    proc = subprocess.Popen(
-        [sys.executable, str(script)],
-        env={**os.environ, **env},
-        cwd=tmp_path,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
+    sup = init_supervisor(keep_running=True)
+    sup.set_http_port(port)
+    sup.set_heartbeat_interval("100ms")
+    sup.register(Job(name="started_job", command='echo "started"'))
+    sup.register(
+        CronJob(
+            name="heart_beat",
+            interval="150ms",
+            run_until=3,
+            command='echo "still running"',
+            depends=["started_job"],
+            dependency_mode="completed",
+        )
+    )
+    sup.register(
+        Job(
+            name="confirmation",
+            command='echo "beat confirmed"',
+            depends=["heart_beat"],
+            dependency_mode="run_after",
+        )
+    )
+    sup.register(
+        Job(
+            name="done",
+            command='echo "done"',
+            depends=["heart_beat"],
+            dependency_mode="completed",
+        )
     )
 
     samples: list[dict] = []
 
-    try:
+    with RunningSupervisor(sup, port):
 
         def heartbeat_completed() -> bool:
             payload = get_json_any(f"http://127.0.0.1:{port}/state")
@@ -417,8 +432,6 @@ def test_simple_dag_cron_completed_dependency(tmp_path: Path):
             ("heart_beat", "confirmation", "run_after"),
             ("heart_beat", "done", "completed"),
         }
-    finally:
-        _terminate_process_group(proc)
 
 
 @pytest.mark.e2e
@@ -453,30 +466,17 @@ def test_supervisor_exits_when_all_complete(tmp_path: Path):
 
 
 @pytest.mark.e2e
-def test_supervisor_keeps_running_when_requested(tmp_path: Path):
+def test_supervisor_keeps_running_when_requested():
     port = free_port()
-    env = {
-        "TINYSUPERVISOR_HTTP_PORT": str(port),
-        "TINYSUPERVISOR_CRON_INTERVAL": "150ms",
-        "TINYSUPERVISOR_CRON_RUN_UNTIL": "1",
-    }
+    sup = init_supervisor(keep_running=True)
+    sup.set_http_port(port)
+    sup.set_heartbeat_interval("100ms")
+    sup.register(Job(name="fast", command="echo done"))
 
-    script = EXAMPLES_DIR / "simple_dag.py"
-    proc = subprocess.Popen(
-        [sys.executable, str(script)],
-        env={**os.environ, **env},
-        cwd=tmp_path,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-
-    try:
+    with RunningSupervisor(sup, port) as running:
         wait_until(
-            lambda: proc.poll() is None,
-            timeout=30,
-            message="supervisor should still be running",
+            lambda: sup.get_task_state("fast") == ProcessState.COMPLETED,
+            message="fast job should complete",
         )
-        assert proc.poll() is None, "supervisor should still be alive"
-    finally:
-        _terminate_process_group(proc)
+        time.sleep(0.5)
+        assert running.thread.is_alive(), "supervisor should still be alive"

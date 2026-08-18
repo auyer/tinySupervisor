@@ -88,6 +88,11 @@ class Reconciler:
         )
         entry.state = new_state
 
+    def _dependency_failed(self, task: Task) -> bool:
+        return any(
+            self.state.entries[dep].state is ProcessState.FATAL for dep in task.depends
+        )
+
     def _start(self, entry: TaskEntry, now: float) -> None:
         task = entry.task
         entry.handle = Process(task.runnable, task.args, task.kwargs, task.context)
@@ -149,8 +154,13 @@ class Reconciler:
         task = entry.task
         st = entry.state
 
+        # TODO: make a "cancelled" state ?
+        # Having them all with "Failed" could be confusing
         if st == ProcessState.WAITING:
-            if (
+            if self._dependency_failed(task):
+                self._transition(entry, ProcessState.FATAL)
+                self._logger.info(f"Task '{task.name}' failed")
+            elif (
                 entry.run_count == 0
                 and task.autostart
                 and dependencies_ready(task, self.state.entries)
@@ -219,6 +229,13 @@ class Reconciler:
         if st == ProcessState.FATAL:
             return
 
+        # TODO: make a "cancelled" state ?
+        # Having them all with "Failed" could be confusing
+        if st == ProcessState.WAITING and self._dependency_failed(task):
+            self._transition(entry, ProcessState.FATAL)
+            self._logger.info(f"Task '{task.name}' failed")
+            return
+
         if not dependencies_ready(task, self.state.entries):
             if task.dependency_mode is DependencyMode.RUN_AFTER and all(
                 self.state.entries[dep].completed for dep in task.depends
@@ -282,6 +299,13 @@ class Reconciler:
             return
 
         if st == ProcessState.FATAL:
+            return
+
+        # TODO: make a "cancelled" state ?
+        # Having them all with "Failed" could be confusing
+        if st == ProcessState.WAITING and self._dependency_failed(task):
+            self._transition(entry, ProcessState.FATAL)
+            self._logger.info(f"Task '{task.name}' failed")
             return
 
         if not dependencies_ready(task, self.state.entries):
