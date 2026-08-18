@@ -1,0 +1,33 @@
+name: "[template] Lint Python"
+
+on:
+  workflow_call:
+    inputs:
+      path:
+        required: true
+        type: string
+
+jobs:
+  python-lint:
+    name: Python Lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version:
+          - "3.14"
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv and set the Python version
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: install
+        run: cd ${{ inputs.path }} && uv sync --locked --all-extras --dev
+
+      - name: run the tests
+        run: cd ${{ inputs.path }} && make check
+
+
