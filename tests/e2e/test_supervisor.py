@@ -419,3 +419,64 @@ def test_simple_dag_cron_completed_dependency(tmp_path: Path):
         }
     finally:
         _terminate_process_group(proc)
+
+
+@pytest.mark.e2e
+def test_supervisor_exits_when_all_complete(tmp_path: Path):
+    port = free_port()
+    env = {
+        "TINYSUPERVISOR_HTTP_PORT": str(port),
+        "TINYSUPERVISOR_CRON_INTERVAL": "150ms",
+        "TINYSUPERVISOR_CRON_RUN_UNTIL": "1",
+    }
+
+    script = EXAMPLES_DIR / "simple_dag.py"
+    proc = subprocess.Popen(
+        [sys.executable, str(script)],
+        env={**os.environ, **env},
+        cwd=tmp_path,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+
+    try:
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            _terminate_process_group(proc)
+            pytest.fail("supervisor did not exit when all tasks completed")
+
+        assert proc.returncode == 0, f"expected exit code 0, got {proc.returncode}"
+    finally:
+        _terminate_process_group(proc)
+
+
+@pytest.mark.e2e
+def test_supervisor_keeps_running_when_requested(tmp_path: Path):
+    port = free_port()
+    env = {
+        "TINYSUPERVISOR_HTTP_PORT": str(port),
+        "TINYSUPERVISOR_CRON_INTERVAL": "150ms",
+        "TINYSUPERVISOR_CRON_RUN_UNTIL": "1",
+    }
+
+    script = EXAMPLES_DIR / "simple_dag.py"
+    proc = subprocess.Popen(
+        [sys.executable, str(script)],
+        env={**os.environ, **env},
+        cwd=tmp_path,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+
+    try:
+        wait_until(
+            lambda: proc.poll() is None,
+            timeout=30,
+            message="supervisor should still be running",
+        )
+        assert proc.poll() is None, "supervisor should still be alive"
+    finally:
+        _terminate_process_group(proc)

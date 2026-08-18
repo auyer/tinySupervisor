@@ -23,7 +23,11 @@ _SHUTDOWN_TIMEOUT = 15.0
 class Supervisor:
     """Registers tasks and reconciles their state on a heartbeat interval."""
 
-    def __init__(self, verbosity: Verbosity | str = Verbosity.INFO) -> None:
+    def __init__(
+        self,
+        verbosity: Verbosity | str = Verbosity.INFO,
+        keep_running: bool = False,
+    ) -> None:
         self._state = State()
         self._logger = Logger(verbosity)
         self._reconciler = Reconciler(self._state, self._logger)
@@ -34,6 +38,8 @@ class Supervisor:
         self._auto_wait_for: str | None = None
         self._stop_event = threading.Event()
         self._httpd: SupervisorHTTPServer | None = None
+        self._keep_running = keep_running
+        self._exit_code = 0
 
     # -- configuration ----------------------------------------------------
 
@@ -136,8 +142,11 @@ class Supervisor:
 
     # -- lifecycle --------------------------------------------------------
 
-    def start(self) -> None:
-        """Start the HTTP server and run the reconciler loop until stopped."""
+    def start(self) -> int:
+        """Start the HTTP server and run the reconciler loop until stopped.
+
+        Returns the exit code (0 = success, 1 = any task FATAL).
+        """
         self._install_signal_handlers()
         self._prepare_cron_deadlines()
 
@@ -149,6 +158,7 @@ class Supervisor:
         threading.Thread(target=self._httpd.serve_forever, daemon=True).start()
 
         self._run_loop()
+        return self._exit_code
 
     def stop(self) -> None:
         """Request a graceful shutdown (thread-safe)."""
@@ -165,8 +175,18 @@ class Supervisor:
         while not self._stop_event.is_set():
             self._reconciler.reconcile()
             self._metrics.update(self._state.entries)
+            if not self._keep_running and self._all_done():
+                break
             self._stop_event.wait(self._sleep_interval())
 
+        with self._state.lock:
+            self._exit_code = (
+                1
+                if any(
+                    e.state is ProcessState.FATAL for e in self._state.entries.values()
+                )
+                else 0
+            )
         self._shutdown()
 
     def _sleep_interval(self) -> float:
@@ -181,6 +201,14 @@ class Supervisor:
                 for entry in self._state.entries.values()
             )
         return min(self._heartbeat, 0.1) if busy else self._heartbeat
+
+    def _all_done(self) -> bool:
+        """Return True when every registered task is terminal."""
+        with self._state.lock:
+            return not any(
+                e.state not in (ProcessState.COMPLETED, ProcessState.FATAL)
+                for e in self._state.entries.values()
+            )
 
     def _shutdown(self) -> None:
         self._reconciler.set_stopping(True)
@@ -211,6 +239,9 @@ class Supervisor:
                 pass
 
 
-def init_supervisor(verbosity: Verbosity | str = Verbosity.INFO) -> Supervisor:
+def init_supervisor(
+    verbosity: Verbosity | str = Verbosity.INFO,
+    keep_running: bool = False,
+) -> Supervisor:
     """Create a new Supervisor."""
-    return Supervisor(verbosity)
+    return Supervisor(verbosity, keep_running)

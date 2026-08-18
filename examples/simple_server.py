@@ -1,4 +1,5 @@
 import os
+import sys
 
 from tinysupervisor import CronJob, Job, Process, Service, init_supervisor
 
@@ -47,7 +48,7 @@ def server(folder_name):
     svc.start()
 
 
-def main():
+def main() -> int:
     supervisor = init_supervisor(
         verbosity=os.environ.get("TINYSUPERVISOR_VERBOSITY", "info")
     )
@@ -79,8 +80,8 @@ def main():
         int(os.environ.get("TINYSUPERVISOR_HTTP_PORT", "8081"))
     )  # default value
 
-    supervisor.start()
+    return supervisor.start()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

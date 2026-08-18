@@ -1,9 +1,10 @@
 import os
+import sys
 
 from tinysupervisor import CronJob, Job, init_supervisor
 
 
-def main():
+def main() -> int:
     supervisor = init_supervisor(
         verbosity=os.environ.get("TINYSUPERVISOR_VERBOSITY", "info")
     )
@@ -45,8 +46,8 @@ def main():
 
     supervisor.set_http_port(int(os.environ.get("TINYSUPERVISOR_HTTP_PORT", "8081")))
 
-    supervisor.start()
+    return supervisor.start()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
