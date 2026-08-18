@@ -8,7 +8,7 @@ def main() -> int:
     supervisor = init_supervisor(
         verbosity=os.environ.get("TINYSUPERVISOR_VERBOSITY", "info")
     )
-    # define task dependency each register task should depende of the previous,
+    # define task dependency each register task should depend on the previous,
     # they should only need them to start, not complete
     supervisor.auto_dependency_mode(mode="register_order", wait_for="start")
 

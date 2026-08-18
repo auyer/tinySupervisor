@@ -1,34 +1,261 @@
 # TinySupervisor
 
-Define process control logic in Python Code.
+Define workflows in Python, run anything you want.
+Tiny to fit in a container, but with observability built in.
 
-A python library inpired by Supervisor, and python workflow apis like Airflow.
-
+A Python library inspired by Supervisor and workflow APIs like Airflow.
 It aims to be a simple way to define workflows to be easily included into a single container.
 
-It allows registering processes, jobs, and tasks with dependencies between them.
-It is simple to use, and should be familiar to Airflow users.
-It offers observability built in, with a health check endpoint, and a prometheus metrics endpoint.
+## Features
 
-It supports adding custom checks with a reconciler loop.
+- **Task types**: Job (one-shot), CronJob (recurring), Service (long-running)
+- **DAG dependencies**: `start`, `completed`, `run_after` modes
+- **Built-in observability**: `/health`, `/state`, `/metrics` HTTP endpoints
+- **Zero config**: single container friendly
+
+## Install
+
+Requires Python 3.14+.
+
+(soon, not published yet)
+```bash
+uv add tinysupervisor
+# or
+pip install tinysupervisor
+```
+
+## Quick start
+
+A minimal workflow with two jobs — the second waits for the first to complete:
+
+```python
+# runnable: quickstart
+import os
+import sys
+
+from tinysupervisor import Job, init_supervisor
 
 
-## Processes
+def main() -> int:
+    supervisor = init_supervisor()
+    supervisor.set_http_port(int(os.environ.get("TINYSUPERVISOR_HTTP_PORT", "8081")))
+    supervisor.set_heartbeat_interval("100ms")
 
-Job -> one time task
-CronJob -> schedule a job to run acording to a cron expression, or interval
-Service -> A long running task that is not expected to exit (like a web service).
+    supervisor.register(Job(name="prepare", command="echo preparing"))
+    supervisor.register(
+        Job(
+            name="build",
+            command="echo building",
+            depends=["prepare"],
+            dependency_mode="completed",
+        )
+    )
 
-## process dependencies:
-Processes can depend on a process being COMPLETED or RUNNING.
-A Processes can be scheduled to run after every execution of another task.
+    return supervisor.start()
 
 
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+The supervisor starts an HTTP server (default port 8081), runs the tasks in dependency order, and **exits automatically** once all tasks complete:
+
+- `prepare` runs first
+- `build` waits for `prepare` to complete, then runs
+- The supervisor exits with code `0` (or `1` if any task ends FATAL)
+
+## Tasks
+
+### Job
+
+A one-shot task that runs once and completes (or fails):
+
+```python
+from tinysupervisor import Job
+
+Job(name="backup", command="tar -czf backup.tar.gz /data")
+```
+
+Jobs can also run a Python function via `executable`:
+
+```python
+Job(name="greet", executable=lambda: print("hello"))
+```
+
+### CronJob
+
+A task that runs on a recurring interval, optionally bounded by `run_until`:
+
+```python
+# runnable: cron
+import os
+import sys
+
+from tinysupervisor import Job, CronJob, init_supervisor
+
+
+def main() -> int:
+    supervisor = init_supervisor()
+    supervisor.set_http_port(int(os.environ.get("TINYSUPERVISOR_HTTP_PORT", "8081")))
+    supervisor.set_heartbeat_interval("100ms")
+
+    supervisor.register(Job(name="init", command="echo init"))
+    supervisor.register(
+        CronJob(
+            name="heartbeat",
+            interval="1s",
+            run_until=3,
+            command="echo beat",
+            depends=["init"],
+            dependency_mode="completed",
+        )
+    )
+
+    return supervisor.start()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+`run_until` can be an integer (max number of runs) or a duration string like `"30s"`.
+
+### Service
+
+A long-running task that the supervisor keeps alive until stopped:
+
+```python
+Service(name="server", command="python3 -m http.server 8080")
+```
+
+Services stay running until the supervisor receives `SIGINT` or `SIGTERM`.
+When a service exits unexpectedly the supervisor can optionally restart it
+(`autorestart=True`).
+
+## Dependencies
+
+Tasks can depend on others. The `dependency_mode` controls *when* the dependent task starts:
+
+| Mode | Meaning |
+|---|---|
+| `start` | Start as soon as the dependency has started |
+| `completed` | Wait until the dependency completes |
+| `run_after` | Run every time the dependency runs |
+
+```python
+# runnable: run_after
+import os
+import sys
+
+from tinysupervisor import Job, CronJob, init_supervisor
+
+
+def main() -> int:
+    supervisor = init_supervisor()
+    supervisor.set_http_port(int(os.environ.get("TINYSUPERVISOR_HTTP_PORT", "8081")))
+    supervisor.set_heartbeat_interval("100ms")
+
+    supervisor.register(Job(name="seed", command="echo seed"))
+    supervisor.register(
+        CronJob(
+            name="tick",
+            interval="1s",
+            run_until=2,
+            command="echo tick",
+            depends=["seed"],
+            dependency_mode="completed",
+        )
+    )
+    supervisor.register(
+        Job(
+            name="after_tick",
+            command="echo after tick",
+            depends=["tick"],
+            dependency_mode="run_after",
+        )
+    )
+
+    return supervisor.start()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+You can also chain tasks automatically with `auto_dependency_mode`:
+
+```python
+supervisor.auto_dependency_mode(mode="register_order", wait_for="start")
+# Each task registered after this call depends on the previous one (start mode).
+```
+
+## Observability
+
+The supervisor exposes an HTTP server with three endpoints:
+
+```bash
+curl http://localhost:8081/health   # 200 OK or 400 Unhealthy
+curl http://localhost:8081/state    # full JSON state of all tasks
+curl http://localhost:8081/metrics  # Prometheus metrics
+```
+
+The `/state` endpoint returns JSON with each task's `current` state, `desired` state,
+`run_count`, and `completed` flag, plus the dependency graph:
+
+```json
+{
+  "processes": {
+    "prepare": {"current": "completed", "desired": "completed", "run_count": 1, "completed": true},
+    "build":   {"current": "completed", "desired": "completed", "run_count": 1, "completed": true}
+  },
+  "graph": {
+    "nodes": ["prepare", "build"],
+    "edges": [{"from": "prepare", "to": "build", "mode": "completed"}]
+  }
+}
+```
+
+## Exit codes
+
+The supervisor's `start()` returns an exit code:
+
+- **0** — all tasks completed successfully
+- **1** — at least one task ended in `FATAL`
+
+By default the supervisor **exits automatically** when all tasks reach a terminal
+state (`COMPLETED` or `FATAL`). To keep it running (e.g. for long-running services), pass `keep_running=True`:
+
+```python
+supervisor = init_supervisor(keep_running=True)
+```
+
+## Verbosity
+
+Control log output via the `Verbosity` enum or the `TINYSUPERVISOR_VERBOSITY`
+environment variable:
+
+| Level | Behaviour |
+|---|---|
+| `silent` | no output |
+| `info` | task start and finish (default) |
+| `debug` | every state transition |
+
+```python
+from tinysupervisor import Verbosity
+
+supervisor = init_supervisor(verbosity=Verbosity.DEBUG)
+```
+
+## More examples
+
+See the [`examples/`](examples/) directory for complete runnable scripts:
+
+- `simple_dag.py` — cron heartbeat with downstream jobs
+- `simple_server.py` — file-generation cron + HTTP server
 
 ## Process states
 
-Heavily inspired by Supervisor, with only a few changes.
-
+Tasks transition through these states during their lifecycle:
 
 ```
 [starting] <-> [backoff]
@@ -40,75 +267,6 @@ Heavily inspired by Supervisor, with only a few changes.
  |  [running] <--> [waiting]
  |
   \> [stopping] -> [COMPLETED]
-
 ```
 
-
-A process controlled by tinySupervisor will be in one of the below states at any given time. You may see these state names in various user interface elements in clients.
-
-COMPLETED (0)
-
-    The process has been COMPLETED due to a stop request, and it stopped successfully.
-
-STARTING (10)
-
-    The process is starting due to a start request.
-
-RUNNING (20)
-
-    The process is running.
-
-BACKOFF (30)
-
-    The process entered the STARTING state but subsequently exited too quickly (before the time defined in startsecs) to move to the RUNNING state.
-
-STOPPING (40)
-
-    The process is stopping due to a stop request.
-
-WAITING (50)
-
-    The process is waiting for a condition to start running. It could be sleeping due to a configured interval, or for a dependency to be COMPLETED (or RUNNING)
-
-EXITED (100)
-
-    The process exited from the RUNNING state (expectedly or unexpectedly).
-
-FATAL (200)
-
-    The process could not be started successfully.
-
-UNKNOWN (1000)
-
-    The process is in an unknown state (tinySupervisor programming error).
-
-Each process run under supervisor progresses through these states as per the following directed graph.
-Subprocess State Transition Graph
-
-Subprocess State Transition Graph
-
-A process is in the COMPLETED state if it has been COMPLETED administratively or if it has never been started.
-
-When an autorestarting process is in the BACKOFF state, it will be automatically restarted by tinySupervisor. It will switch between STARTING and BACKOFF states until it becomes evident that it cannot be started because the number of startretries has exceeded the maximum, at which point it will transition to the FATAL state.
-
-Note
-
-Retries will take increasingly more time depending on the number of subsequent attempts made, adding one second each time.
-
-So if you set startretries=3, tinySupervisor will wait one, two and then three seconds between each restart attempt, for a total of 6 seconds.
-
-When a process is in the EXITED state, it will automatically restart:
-
-    never if its autorestart parameter is set to false.
-
-    unconditionally if its autorestart parameter is set to true.
-
-    conditionally if its autorestart parameter is set to unexpected. If it exited with an exit code that doesn’t match one of the exit codes defined in the exitcodes configuration parameter for the process, it will be restarted.
-
-A process automatically transitions from EXITED to RUNNING as a result of being configured to autorestart conditionally or unconditionally. The number of transitions between RUNNING and EXITED is not limited in any way: it is possible to create a configuration that endlessly restarts an exited process. This is a feature, not a bug.
-
-An autorestarted process will never be automatically restarted if it ends up in the FATAL state (it must be manually restarted from this state).
-
-A process transitions into the STOPPING state via an administrative stop request, and will then end up in the COMPLETED state.
-
-A process that cannot be COMPLETED successfully will stay in the STOPPING state forever. This situation should never be reached during normal operations as it implies that the process did not respond to a final SIGKILL signal sent to it.
+For full details see [`docs/DOCS.md`](docs/DOCS.md).
