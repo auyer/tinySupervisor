@@ -99,16 +99,24 @@ class Process:
                 env=self.env,
             )
         elif callable(self.runnable):
-            target = self.runnable
-            if self.env:
+            if self.env is None:
+                self._thread = threading.Thread(
+                    target=self.runnable,
+                    args=self.args,
+                    kwargs=self.kwargs,
+                    daemon=True,
+                )
+            else:
                 env = self.env
                 fn = self.runnable
+                args = self.args
+                kwargs = self.kwargs
 
                 def _target() -> None:
                     old = {k: os.environ.get(k) for k in env}
                     os.environ.update(env)
                     try:
-                        fn(*self.args, **self.kwargs)
+                        fn(*args, **kwargs)
                     finally:
                         for k, v in old.items():
                             if v is None:
@@ -116,12 +124,7 @@ class Process:
                             else:
                                 os.environ[k] = v
 
-                target = _target
-            self._thread = threading.Thread(
-                target=target,
-                args=(),
-                daemon=True,
-            )
+                self._thread = threading.Thread(target=_target, daemon=True)
             self._thread.start()
         else:
             raise TypeError(
