@@ -54,7 +54,7 @@ def main():
     supervisor.register(
         CronJob(
             name="index_folder",
-            interval="1m",
+            interval="1s",
             executable=index_folder_runner,
             kwargs={"folder_name": "output"},
             depends=["init_folder"],

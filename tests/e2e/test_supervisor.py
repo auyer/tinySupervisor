@@ -5,6 +5,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -37,6 +38,35 @@ def get_json_any(url: str) -> dict | None:
         return json.loads(exc.read().decode())
     except urllib.error.URLError, OSError:
         return None
+
+
+def _url_reachable(url: str) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=2) as resp:
+            return resp.status == 200
+    except urllib.error.URLError, OSError:
+        return False
+
+
+def _file_contains(path: Path, text: str) -> bool:
+    try:
+        return text in path.read_text()
+    except OSError:
+        return False
+
+
+def _terminate_process_group(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait(timeout=10)
 
 
 class RunningSupervisor:
@@ -189,15 +219,14 @@ def test_health_returns_400_when_desired_running_but_exited():
 
 
 @pytest.mark.e2e
-@pytest.mark.parametrize("example", ["simple.py", "simple_dag.py"])
-def test_examples_run(example: str, tmp_path: Path):
+def test_simple_dag_run(tmp_path: Path):
     port = free_port()
     env = {
         "TINYSUPERVISOR_HTTP_PORT": str(port),
         "TINYSUPERVISOR_SERVICE_PORT": str(free_port()),
     }
 
-    script = EXAMPLES_DIR / example
+    script = EXAMPLES_DIR / "simple_dag.py"
     proc = subprocess.Popen(
         [sys.executable, str(script)],
         env={**os.environ, **env},
@@ -218,19 +247,76 @@ def test_examples_run(example: str, tmp_path: Path):
             except urllib.error.URLError, OSError:
                 return False
 
-        wait_until(
-            healthy, timeout=30, message=f"example {example} should become healthy"
-        )
+        wait_until(healthy, timeout=30, message="simple_dag.py should become healthy")
     finally:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            proc.wait(timeout=10)
+        _terminate_process_group(proc)
 
     out = proc.stdout.read().decode() if proc.stdout else ""
     assert proc.returncode in (0, -15), f"unexpected exit {proc.returncode}: {out}"
+
+
+@pytest.mark.e2e
+def test_simple_server_serves_created_file(tmp_path: Path):
+    http_port = free_port()
+    service_port = free_port()
+    file_name = "created_file.txt"
+    env = {
+        "TINYSUPERVISOR_HTTP_PORT": str(http_port),
+        "TINYSUPERVISOR_SERVICE_PORT": str(service_port),
+    }
+
+    script = EXAMPLES_DIR / "simple_server.py"
+    proc = subprocess.Popen(
+        [sys.executable, str(script)],
+        env={**os.environ, **env},
+        cwd=tmp_path,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+
+    file_url = f"http://localhost:{service_port}/{file_name}"
+    index_path = tmp_path / "index.html"
+
+    try:
+        output_dir = tmp_path / "output"
+        wait_until(
+            lambda: output_dir.is_dir(), timeout=10, message="output dir should exist"
+        )
+
+        # 1. create a file inside the "output" folder
+        (output_dir / file_name).write_text("created by e2e test")
+
+        # 2. wait one cron interval for index.html to be regenerated
+        time.sleep(1)
+
+        # 3. the file is reachable via the http server
+        wait_until(
+            lambda: _url_reachable(file_url),
+            timeout=15,
+            message="file should be reachable via the http server",
+        )
+
+        # 4. index.html contains the created file name
+        wait_until(
+            lambda: _file_contains(index_path, file_name),
+            timeout=5,
+            message="index.html should contain the created file name",
+        )
+
+        # 5. stop the process
+        _terminate_process_group(proc)
+
+        # 6. the server is offline
+        wait_until(
+            lambda: not _url_reachable(file_url),
+            timeout=10,
+            message="http server should be offline after stopping",
+        )
+    finally:
+        _terminate_process_group(proc)
+
+    # 7. tmp_path (including "output" and index.html) is cleaned up by pytest
 
 
 @pytest.mark.e2e
@@ -316,9 +402,4 @@ def test_simple_dag_cron_completed_dependency(tmp_path: Path):
             ("heart_beat", "done", "completed"),
         }
     finally:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            proc.wait(timeout=10)
+        _terminate_process_group(proc)
