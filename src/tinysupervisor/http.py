@@ -70,12 +70,25 @@ class HealthCheckRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path in ("/health", "/healthz"):
             self._handle_health()
+        elif self.path == "/state":
+            self._handle_state()
         elif self.path == "/metrics":
             self._handle_metrics()
         else:
             self.send_error(404)
 
     def _handle_health(self) -> None:
+        server = cast(SupervisorHTTPServer, self.server)
+        healthy, _ = compute_health(server.snapshot())
+        status = 200 if healthy else 400
+        body = ("OK" if healthy else "Unhealthy").encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _handle_state(self) -> None:
         server = cast(SupervisorHTTPServer, self.server)
         healthy, payload = compute_health(server.snapshot())
         status = 200 if healthy else 400

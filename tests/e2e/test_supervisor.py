@@ -86,6 +86,9 @@ class RunningSupervisor:
     def health_url(self) -> str:
         return f"http://127.0.0.1:{self.port}/health"
 
+    def state_url(self) -> str:
+        return f"http://127.0.0.1:{self.port}/state"
+
     def metrics_url(self) -> str:
         return f"http://127.0.0.1:{self.port}/metrics"
 
@@ -105,10 +108,10 @@ def test_service_reaches_running_and_health_ok():
         )
         wait_until(
             lambda: (
-                get_json(running.health_url())["processes"]["server"]["current"]
+                get_json(running.state_url())["processes"]["server"]["current"]
                 == "running"
             ),
-            message="health endpoint should report running",
+            message="state endpoint should report running",
         )
 
     assert sup.get_task_state("server") == ProcessState.COMPLETED
@@ -343,7 +346,7 @@ def test_simple_dag_cron_completed_dependency(tmp_path: Path):
     try:
 
         def heartbeat_completed() -> bool:
-            payload = get_json_any(f"http://127.0.0.1:{port}/health")
+            payload = get_json_any(f"http://127.0.0.1:{port}/state")
             if payload is None:
                 return False
             samples.append(payload)
@@ -365,7 +368,7 @@ def test_simple_dag_cron_completed_dependency(tmp_path: Path):
         assert samples[-1]["processes"]["heart_beat"]["run_count"] == 3
 
         def done_ran() -> bool:
-            payload = get_json_any(f"http://127.0.0.1:{port}/health")
+            payload = get_json_any(f"http://127.0.0.1:{port}/state")
             return (
                 payload is not None and payload["processes"]["done"]["run_count"] == 1
             )
@@ -375,7 +378,7 @@ def test_simple_dag_cron_completed_dependency(tmp_path: Path):
         )
 
         def confirmation_count() -> bool:
-            payload = get_json_any(f"http://127.0.0.1:{port}/health")
+            payload = get_json_any(f"http://127.0.0.1:{port}/state")
             return (
                 payload is not None
                 and payload["processes"]["confirmation"]["run_count"] == 3
@@ -387,7 +390,7 @@ def test_simple_dag_cron_completed_dependency(tmp_path: Path):
             message="confirmation should run on each cron run",
         )
 
-        final = get_json_any(f"http://127.0.0.1:{port}/health")
+        final = get_json_any(f"http://127.0.0.1:{port}/state")
         assert final is not None
         assert set(final["graph"]["nodes"]) == {
             "started_job",
