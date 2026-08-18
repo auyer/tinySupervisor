@@ -17,3 +17,5 @@ __all__ = [
     "Supervisor",
     "init_supervisor",
 ]
+
+__version__ = "0.1.0"

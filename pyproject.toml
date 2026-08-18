@@ -62,6 +62,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = [
     "e2e: end-to-end tests that exercise the full supervisor lifecycle (real processes)",
 ]
