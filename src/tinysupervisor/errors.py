@@ -11,3 +11,6 @@ class CyclicDependencyError(TinySupervisorError):
     """Raised when the dependency graph contains a cycle."""
 
 
+
+class ProcessError(TinySupervisorError):
+    """Raised when an underlying process fails."""
