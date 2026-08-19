@@ -1,7 +1,7 @@
 import os
 import sys
 
-from tinysupervisor import CronJob, Job, Process, Service, init_supervisor
+from tinysupervisor import CronJob, Job, Process, RecurrentJob, Service, init_supervisor
 
 
 # generate an html list of files in the folder
@@ -70,6 +70,13 @@ def main() -> int:
             kwargs={"folder_name": "output"},
             depends=["init_folder"],
             wait_for="completed",
+        )
+    )
+    supervisor.register(
+        RecurrentJob(
+            name="confirmation",
+            command='echo "index confirmed"',
+            depends=["index_folder"],  # run every time the CronJob executes
         )
     )
     supervisor.register(
