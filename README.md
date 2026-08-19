@@ -257,7 +257,7 @@ This can be toggled with the `stream_logs` option.
 Each line is prefixed with the task name:
 
 ```python
-supervisor = init_supervisor(stream_logs=True) # default
+supervisor = init_supervisor(stream_logs=True)  # default
 ```
 
 The flag can also be overridden per task:
