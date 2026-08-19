@@ -1,7 +1,6 @@
 """tinySupervisor: a process supervisor with DAG-like dependencies."""
 
-from tinysupervisor.cron_job import CronJob
-from tinysupervisor.job import Job
+from tinysupervisor.jobs import Job, CronJob
 from tinysupervisor.logger import Verbosity
 from tinysupervisor.process import Process
 from tinysupervisor.service import Service
