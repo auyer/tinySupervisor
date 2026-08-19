@@ -1,6 +1,6 @@
 import time
 
-from tinysupervisor.jobs import Job, RecurrentJob
+from tinysupervisor.jobs import CronJob, Job, RecurrentJob
 from tinysupervisor.logger import Logger, Verbosity
 from tinysupervisor.policy import dependencies_ready
 from tinysupervisor.reconciler import Reconciler
@@ -232,3 +232,78 @@ def test_waiting_job_stays_waiting_while_upstream_running():
         handle = state.entries["up"].handle
     if handle is not None and handle.is_alive():
         handle.terminate(force=True)
+
+
+# -- log capture: reconciler builds per-run sinks -----------------------------
+
+
+def test_start_writes_log_to_configured_folder(tmp_path):
+    state = State()
+    state.add(Job(name="echo", command="echo hello"))
+    rec = Reconciler(state, Logger(Verbosity.SILENT), log_folder=str(tmp_path))
+
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        rec.reconcile()
+        with state.lock:
+            if state.entries["echo"].state is ProcessState.COMPLETED:
+                break
+        time.sleep(0.05)
+
+    log = tmp_path / "echo" / "1.log"
+    assert log.exists()
+    assert "hello" in log.read_text()
+
+
+def test_cron_runs_produce_numbered_log_files(tmp_path):
+    state = State()
+    state.add(
+        CronJob(
+            name="tick",
+            interval="50ms",
+            run_until=3,
+            command="echo beat",
+        )
+    )
+    rec = Reconciler(state, Logger(Verbosity.SILENT), log_folder=str(tmp_path))
+
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        rec.reconcile()
+        with state.lock:
+            if state.entries["tick"].state is ProcessState.COMPLETED:
+                break
+        time.sleep(0.02)
+
+    with state.lock:
+        assert state.entries["tick"].run_count == 3
+    assert (tmp_path / "tick" / "1.log").exists()
+    assert (tmp_path / "tick" / "2.log").exists()
+    assert (tmp_path / "tick" / "3.log").exists()
+    assert "beat" in (tmp_path / "tick" / "3.log").read_text()
+
+
+def test_task_stream_logs_override_streams_to_console(tmp_path, capsys):
+    state = State()
+    state.add(
+        CronJob(
+            name="loud",
+            interval="50ms",
+            run_until=1,
+            command="echo shout",
+            stream_logs=True,
+        )
+    )
+    rec = Reconciler(state, Logger(Verbosity.SILENT), log_folder=str(tmp_path))
+
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        rec.reconcile()
+        with state.lock:
+            if state.entries["loud"].state is ProcessState.COMPLETED:
+                break
+        time.sleep(0.02)
+
+    captured = capsys.readouterr()
+    assert "[loud] shout" in captured.out
+    assert "shout" in (tmp_path / "loud" / "1.log").read_text()

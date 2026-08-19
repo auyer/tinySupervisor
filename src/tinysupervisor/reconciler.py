@@ -5,10 +5,12 @@ how to proceed, so every task type is driven through the same call path:
 ``entry.task.policy.reconcile(entry, self, now)``.
 """
 
+import os
 import time
 from collections.abc import Mapping
 
 from tinysupervisor.logger import Logger
+from tinysupervisor.logsink import LogSink
 from tinysupervisor.policy import ReconcileContext
 from tinysupervisor.process import Process
 from tinysupervisor.state import State, TaskEntry
@@ -16,6 +18,7 @@ from tinysupervisor.states import DesiredState, ProcessState
 from tinysupervisor.task import Task
 
 _STOP_GRACE = 5.0
+_DEFAULT_LOG_FOLDER = "/tmp/tinysup/log"
 
 
 def desired_state(entry: TaskEntry, entries: Mapping[str, TaskEntry]) -> DesiredState:
@@ -30,13 +33,29 @@ def desired_state(entry: TaskEntry, entries: Mapping[str, TaskEntry]) -> Desired
 class Reconciler(ReconcileContext):
     """Drives tasks toward their desired state each heartbeat."""
 
-    def __init__(self, state: State, logger: Logger) -> None:
+    def __init__(
+        self,
+        state: State,
+        logger: Logger,
+        log_folder: str = _DEFAULT_LOG_FOLDER,
+        stream_logs: bool = False,
+    ) -> None:
         self.state = state
         self._logger = logger
+        self._log_folder = log_folder
+        self._stream_logs = stream_logs
         self._stopping = False
 
     def set_stopping(self, stopping: bool = True) -> None:
         self._stopping = stopping
+
+    def set_log_folder(self, folder: str) -> None:
+        """Change the folder where per-run task logs are written."""
+        self._log_folder = folder
+
+    def set_stream_logs(self, stream: bool = True) -> None:
+        """Toggle streaming task logs to the main console."""
+        self._stream_logs = stream
 
     def reconcile(self) -> None:
         now = time.monotonic()
@@ -63,7 +82,8 @@ class Reconciler(ReconcileContext):
         entry.handle = Process(
             task.runnable, task.args, task.kwargs, task.context, task.env
         )
-        entry.handle.start()
+        sink = self._make_sink(entry)
+        entry.handle.start(sink=sink)
         entry.last_start = now
         entry.started = True
         entry.start_count += 1
@@ -74,6 +94,13 @@ class Reconciler(ReconcileContext):
             )
         else:
             self._logger.info(f"Starting task '{task.name}'")
+
+    def _make_sink(self, entry: TaskEntry) -> LogSink:
+        task = entry.task
+        run_number = entry.start_count + 1
+        stream = task.stream_logs if task.stream_logs is not None else self._stream_logs
+        path = os.path.join(self._log_folder, task.name, f"{run_number}.log")
+        return LogSink(path, prefix=task.name, stream=stream)
 
     def transition(self, entry: TaskEntry, new_state: ProcessState) -> None:
         old = entry.state

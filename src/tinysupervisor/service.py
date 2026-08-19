@@ -28,6 +28,7 @@ class Service(Task):
         startretries: int = 3,
         context: str | None = None,
         env: dict[str, str] | None = None,
+        stream_logs: bool | None = None,
     ) -> None:
         super().__init__(
             name=name,
@@ -44,6 +45,7 @@ class Service(Task):
             startretries=startretries,
             context=context,
             env=env,
+            stream_logs=stream_logs,
         )
 
     @classmethod

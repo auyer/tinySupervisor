@@ -1,5 +1,6 @@
 """Process execution: running system processes and Python callables."""
 
+import contextlib
 import os
 import subprocess
 import threading
@@ -8,6 +9,7 @@ from typing import Any
 import psutil
 
 from tinysupervisor.errors import ProcessError
+from tinysupervisor.logsink import LogSink
 from tinysupervisor.task import Executable
 
 
@@ -18,6 +20,12 @@ class Process:
     and manages its execution. It is the low-level execution primitive used by
     the supervisor; ``Job``, ``Service`` and ``CronJob`` are declarative task
     types built on top of it.
+
+    Execution always happens in a separate daemon thread, so it never blocks
+    the caller (e.g. the supervisor's reconcile loop). An optional
+    :class:`LogSink` captures the output: shell commands are piped through a
+    reader thread, and callables have their ``stdout``/``stderr`` redirected to
+    the sink.
     """
 
     def __init__(
@@ -35,6 +43,7 @@ class Process:
         self.env = env
         self._proc: subprocess.Popen[Any] | None = None
         self._thread: threading.Thread | None = None
+        self._returncode: int | None = None
 
     @staticmethod
     def run(
@@ -85,71 +94,133 @@ class Process:
             )
         return result.stdout.splitlines()
 
-    def start(self) -> None:
-        """Start the process asynchronously (subprocess or background thread)."""
+    def start(self, sink: LogSink | None = None) -> None:
+        """Start the process in a background thread.
+
+        ``sink`` is an optional :class:`LogSink` that captures the task's
+        output (files, and optionally the console).
+        """
         if self.runnable is None:
             raise ProcessError("no command or callable provided")
         if isinstance(self.runnable, str):
-            self._proc = subprocess.Popen(
-                self.runnable,
-                shell=True,
-                cwd=self.context,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env=self.env,
-            )
-        elif callable(self.runnable):
-            if self.env is None:
+            if sink is None:
                 self._thread = threading.Thread(
-                    target=self.runnable,
-                    args=self.args,
-                    kwargs=self.kwargs,
+                    target=self._run_command_devnull, daemon=True
+                )
+            else:
+                self._thread = threading.Thread(
+                    target=self._run_command_captured, args=(sink,), daemon=True
+                )
+        elif callable(self.runnable):
+            if sink is None:
+                self._thread = threading.Thread(
+                    target=self._run_callable,
+                    args=(self.runnable, self.args, self.kwargs, self.env),
                     daemon=True,
                 )
             else:
-                env = self.env
-                fn = self.runnable
-                args = self.args
-                kwargs = self.kwargs
-
-                def _target() -> None:
-                    old = {k: os.environ.get(k) for k in env}
-                    os.environ.update(env)
-                    try:
-                        fn(*args, **kwargs)
-                    finally:
-                        for k, v in old.items():
-                            if v is None:
-                                os.environ.pop(k, None)
-                            else:
-                                os.environ[k] = v
-
-                self._thread = threading.Thread(target=_target, daemon=True)
-            self._thread.start()
+                self._thread = threading.Thread(
+                    target=self._run_callable_captured,
+                    args=(self.runnable, self.args, self.kwargs, self.env, sink),
+                    daemon=True,
+                )
         else:
             raise TypeError(
                 f"expected a command string or callable, got {type(self.runnable)!r}"
             )
+        self._thread.start()
+
+    def _run_command_devnull(self) -> None:
+        command = self.runnable
+        assert isinstance(command, str)
+        proc = subprocess.Popen(
+            command,
+            shell=True,
+            cwd=self.context,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=self.env,
+        )
+        self._proc = proc
+        self._returncode = proc.wait()
+
+    def _run_command_captured(self, sink: LogSink) -> None:
+        command = self.runnable
+        assert isinstance(command, str)
+        proc = subprocess.Popen(
+            command,
+            shell=True,
+            cwd=self.context,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=self.env,
+        )
+        self._proc = proc
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                sink.write(line)
+            self._returncode = proc.wait()
+        finally:
+            sink.close()
+
+    def _run_callable(
+        self,
+        fn: Any,
+        args: list[Any],
+        kwargs: dict[str, Any],
+        env: dict[str, str] | None,
+    ) -> None:
+        try:
+            if env is None:
+                fn(*args, **kwargs)
+                return
+            old = {k: os.environ.get(k) for k in env}
+            os.environ.update(env)
+            try:
+                fn(*args, **kwargs)
+            finally:
+                for k, v in old.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
+        finally:
+            self._returncode = 0
+
+    def _run_callable_captured(
+        self,
+        fn: Any,
+        args: list[Any],
+        kwargs: dict[str, Any],
+        env: dict[str, str] | None,
+        sink: LogSink,
+    ) -> None:
+        def _target() -> None:
+            self._run_callable(fn, args, kwargs, env)
+
+        try:
+            with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+                _target()
+        finally:
+            sink.close()
 
     def is_alive(self) -> bool:
-        if self._proc is not None:
-            return self._proc.poll() is None
-        if self._thread is not None:
-            return self._thread.is_alive()
-        return False
+        if self._thread is None:
+            return False
+        return self._thread.is_alive()
 
     def wait(self, timeout: float | None = None) -> None:
-        if self._proc is not None:
-            self._proc.wait(timeout)
         if self._thread is not None:
             self._thread.join(timeout)
 
     def exitcode(self) -> int | None:
-        if self._proc is not None:
-            return self._proc.poll()
-        if self._thread is not None:
-            return None if self._thread.is_alive() else 0
-        return None
+        if self._thread is None:
+            return None
+        if self._thread.is_alive():
+            return None
+        return self._returncode
 
     def terminate(self, force: bool = False) -> None:
         if self._proc is None or self._proc.poll() is not None:

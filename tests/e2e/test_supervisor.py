@@ -479,3 +479,89 @@ def test_supervisor_keeps_running_when_requested():
         )
         time.sleep(0.5)
         assert running.thread.is_alive(), "supervisor should still be alive"
+
+
+@pytest.mark.e2e
+def test_job_writes_log_file(tmp_path: Path):
+    port = free_port()
+    log_folder = tmp_path / "logs"
+    sup = init_supervisor(log_folder=str(log_folder))
+    sup.set_http_port(port)
+    sup.set_heartbeat_interval("100ms")
+    sup.register(Job(name="writer", command="echo captured output"))
+
+    with RunningSupervisor(sup, port):
+        wait_until(
+            lambda: sup.get_task_state("writer") == ProcessState.COMPLETED,
+            message="writer job should complete",
+        )
+
+    log = log_folder / "writer" / "1.log"
+    assert log.is_file(), f"expected log file at {log}"
+    assert "captured output" in log.read_text()
+
+
+@pytest.mark.e2e
+def test_cron_logs_per_run(tmp_path: Path):
+    port = free_port()
+    log_folder = tmp_path / "logs"
+    sup = init_supervisor(log_folder=str(log_folder))
+    sup.set_http_port(port)
+    sup.set_heartbeat_interval("100ms")
+    sup.register(
+        CronJob(name="tick", interval="100ms", run_until=3, command="echo beat")
+    )
+
+    with RunningSupervisor(sup, port):
+        wait_until(
+            lambda: sup.get_task_state("tick") == ProcessState.COMPLETED,
+            timeout=15,
+            message="cron should complete",
+        )
+
+    assert sup.get_run_count("tick") == 3
+    for run in (1, 2, 3):
+        log = log_folder / "tick" / f"{run}.log"
+        assert log.is_file(), f"expected log file at {log}"
+        assert "beat" in log.read_text()
+
+
+@pytest.mark.e2e
+def test_stream_logs_prints_to_console(tmp_path: Path, capsys):
+    port = free_port()
+    log_folder = tmp_path / "logs"
+    sup = init_supervisor(log_folder=str(log_folder), stream_logs=True)
+    sup.set_http_port(port)
+    sup.set_heartbeat_interval("100ms")
+    sup.register(Job(name="chatty", command="echo streamed line"))
+
+    with RunningSupervisor(sup, port):
+        wait_until(
+            lambda: sup.get_task_state("chatty") == ProcessState.COMPLETED,
+            message="chatty job should complete",
+        )
+
+    out = capsys.readouterr().out
+    assert "[chatty] streamed line" in out
+    assert "streamed line" in (log_folder / "chatty" / "1.log").read_text()
+
+
+@pytest.mark.e2e
+def test_task_stream_logs_override(tmp_path: Path, capsys):
+    port = free_port()
+    log_folder = tmp_path / "logs"
+    sup = init_supervisor(log_folder=str(log_folder))  # stream disabled globally
+    sup.set_http_port(port)
+    sup.set_heartbeat_interval("100ms")
+    sup.register(Job(name="loud", command="echo shout", stream_logs=True))
+    sup.register(Job(name="quiet", command="echo whisper"))
+
+    with RunningSupervisor(sup, port):
+        wait_until(
+            lambda: sup.get_task_state("quiet") == ProcessState.COMPLETED,
+            message="quiet job should complete",
+        )
+
+    out = capsys.readouterr().out
+    assert "[loud] shout" in out
+    assert "[quiet] whisper" not in out

@@ -30,6 +30,7 @@ class Job(Task):
         startretries: int = 3,
         context: str | None = None,
         env: dict[str, str] | None = None,
+        stream_logs: bool | None = None,
     ) -> None:
         super().__init__(
             name=name,
@@ -45,6 +46,7 @@ class Job(Task):
             startretries=startretries,
             context=context,
             env=env,
+            stream_logs=stream_logs,
         )
 
 
@@ -83,6 +85,7 @@ class RecurrentJob(Task):
         startretries: int = 3,
         context: str | None = None,
         env: dict[str, str] | None = None,
+        stream_logs: bool | None = None,
     ) -> None:
         super().__init__(
             name=name,
@@ -98,6 +101,7 @@ class RecurrentJob(Task):
             startretries=startretries,
             context=context,
             env=env,
+            stream_logs=stream_logs,
         )
         self.trigger_mode = trigger_mode or "after_run"
         if self.trigger_mode not in ("after_run", "after_start"):
@@ -141,6 +145,7 @@ class CronJob(Task):
         startretries: int = 3,
         context: str | None = None,
         env: dict[str, str] | None = None,
+        stream_logs: bool | None = None,
     ) -> None:
         super().__init__(
             name=name,
@@ -156,6 +161,7 @@ class CronJob(Task):
             startretries=startretries,
             context=context,
             env=env,
+            stream_logs=stream_logs,
         )
         self.interval: str | int | float = interval
         self.run_until: str | int | None = run_until

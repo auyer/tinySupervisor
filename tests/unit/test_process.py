@@ -1,8 +1,10 @@
 import os
+import sys
 
 import pytest
 
 from tinysupervisor.errors import ProcessError
+from tinysupervisor.logsink import LogSink
 from tinysupervisor.process import Process
 
 
@@ -92,3 +94,108 @@ def test_start_callable_with_env_sets_and_restores():
 
     assert seen["value"] == "hello"
     assert "MY_VAR" not in os.environ
+
+
+# -- Process.start() with a LogSink (log capture) ----------------------------
+
+
+def test_start_command_captures_output_to_file(tmp_path):
+    sink = LogSink(tmp_path / "cmd.log")
+    proc = Process("printf 'a\\nb\\n'")
+    proc.start(sink=sink)
+    proc.wait(timeout=5)
+
+    assert proc.exitcode() == 0
+    assert tmp_path.joinpath("cmd.log").read_text() == "a\nb\n"
+
+
+def test_start_command_captures_stderr_into_same_file(tmp_path):
+    sink = LogSink(tmp_path / "cmd.log")
+    proc = Process("echo out && echo err >&2")
+    proc.start(sink=sink)
+    proc.wait(timeout=5)
+
+    content = tmp_path.joinpath("cmd.log").read_text()
+    assert "out" in content
+    assert "err" in content
+
+
+def test_start_command_captures_nonzero_exit(tmp_path):
+    sink = LogSink(tmp_path / "cmd.log")
+    proc = Process("echo boom && exit 3")
+    proc.start(sink=sink)
+    proc.wait(timeout=5)
+
+    assert proc.exitcode() == 3
+    assert "boom" in tmp_path.joinpath("cmd.log").read_text()
+
+
+def test_start_callable_captures_print_to_file(tmp_path):
+    sink = LogSink(tmp_path / "fn.log")
+
+    def speak():
+        print("from function")
+
+    proc = Process(speak)
+    proc.start(sink=sink)
+    proc.wait(timeout=5)
+
+    assert proc.exitcode() == 0
+    assert tmp_path.joinpath("fn.log").read_text() == "from function\n"
+
+
+def test_start_callable_captures_stderr_to_file(tmp_path):
+    sink = LogSink(tmp_path / "fn.log")
+
+    def warn():
+        print("bad", file=sys.stderr)
+
+    proc = Process(warn)
+    proc.start(sink=sink)
+    proc.wait(timeout=5)
+
+    assert tmp_path.joinpath("fn.log").read_text() == "bad\n"
+
+
+def test_start_callable_with_env_and_capture(tmp_path):
+    sink = LogSink(tmp_path / "fn.log")
+
+    def read_env():
+        print(os.environ.get("MY_VAR"))
+
+    proc = Process(read_env, env={"MY_VAR": "hello"})
+    proc.start(sink=sink)
+    proc.wait(timeout=5)
+
+    assert proc.exitcode() == 0
+    assert tmp_path.joinpath("fn.log").read_text() == "hello\n"
+    assert "MY_VAR" not in os.environ
+
+
+def test_start_command_streams_to_console(tmp_path, capsys):
+    sink = LogSink(tmp_path / "cmd.log", prefix="t", stream=True)
+    proc = Process("echo streamed")
+    proc.start(sink=sink)
+    proc.wait(timeout=5)
+
+    assert capsys.readouterr().out == "[t] streamed\n"
+
+
+def test_start_callable_streams_to_console(tmp_path, capsys):
+    sink = LogSink(tmp_path / "fn.log", prefix="t", stream=True)
+
+    def speak():
+        print("streamed from fn")
+
+    proc = Process(speak)
+    proc.start(sink=sink)
+    proc.wait(timeout=5)
+
+    assert capsys.readouterr().out == "[t] streamed from fn\n"
+
+
+def test_start_without_sink_keeps_callable_exitcode_zero():
+    proc = Process(lambda: None)
+    proc.start()
+    proc.wait(timeout=5)
+    assert proc.exitcode() == 0

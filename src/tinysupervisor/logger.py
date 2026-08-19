@@ -39,7 +39,7 @@ class Logger:
         self._logger.propagate = False
         if self.verbosity is not Verbosity.SILENT:
             handler = logging.StreamHandler(sys.stdout)
-            handler.setFormatter(logging.Formatter("[tinysupervisor] %(message)s"))
+            handler.setFormatter(logging.Formatter("[tinysup] %(message)s"))
             self._logger.addHandler(handler)
 
     def info(self, message: str) -> None:

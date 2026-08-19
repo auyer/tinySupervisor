@@ -11,6 +11,7 @@ It aims to be a simple way to define workflows to be easily included into a sing
 - **Task types**: Job (one-shot), CronJob (recurring), RecurrentJob (dependency-driven), Service (long-running)
 - **DAG dependencies**: `wait_for="start"` / `wait_for="completed"`
 - **Built-in observability**: `/health`, `/state`, `/metrics` HTTP endpoints
+- **Per-task log capture**: each run's output is written to a log file, optionally streamed to the console
 - **Zero config**: single container friendly
 
 ## Install
@@ -18,6 +19,7 @@ It aims to be a simple way to define workflows to be easily included into a sing
 Requires Python 3.14+.
 
 (soon, not published yet)
+
 ```bash
 uv add tinysupervisor
 # or
@@ -229,6 +231,46 @@ Works with both shell commands and Python callables:
 ```python
 Job(name="work", executable=my_func, env={"API_KEY": "abc123"})
 ```
+
+## Logs
+
+Every task run is captured to a log file, written as tasks execute in the
+background so they never block the supervisor. Each process start gets its own
+file at:
+
+```
+<log_folder>/<task_name>/<run_number>.log
+```
+
+`run_number` counts process starts, so retries and restarts each get a new
+file. The default log folder is `/tmp/tinysup/log` and can be configured with
+the `log_folder` option:
+
+```python
+from tinysupervisor import init_supervisor
+
+supervisor = init_supervisor(log_folder="/var/log/tinysup")
+```
+
+The task output is mirrored to the main console (in addition to the files).
+This can be toggled with the `stream_logs` option.
+Each line is prefixed with the task name:
+
+```python
+supervisor = init_supervisor(stream_logs=True) # default
+```
+
+The flag can also be overridden per task:
+
+```python
+Job(name="too_verbose", command="echo shout", stream_logs=False)
+Job(name="quiet", command="echo whisper")  # follows the global default
+```
+
+Both shell commands (stdout and stderr) and Python callables (`print` to
+stdout/stderr) are captured. Note that stdout capture for callables redirects
+the process-global `sys.stdout`, so two concurrent callable tasks printing at
+once may interleave their console output (their log files stay separate).
 
 ## Observability
 

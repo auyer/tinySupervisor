@@ -27,10 +27,14 @@ class Supervisor:
         self,
         verbosity: Verbosity | str = Verbosity.INFO,
         keep_running: bool = False,
+        log_folder: str = "/tmp/tinysup/log",
+        stream_logs: bool = False,
     ) -> None:
         self._state = State()
         self._logger = Logger(verbosity)
-        self._reconciler = Reconciler(self._state, self._logger)
+        self._reconciler = Reconciler(
+            self._state, self._logger, log_folder, stream_logs
+        )
         self._metrics = Metrics()
         self._http_port = 8081
         self._heartbeat = 1.0
@@ -88,6 +92,14 @@ class Supervisor:
     def set_http_port(self, port: int) -> None:
         """Set the HTTP server port."""
         self._http_port = port
+
+    def set_log_folder(self, folder: str) -> None:
+        """Set the folder where per-task run logs are written."""
+        self._reconciler.set_log_folder(folder)
+
+    def set_stream_logs(self, stream: bool = True) -> None:
+        """Toggle streaming task logs to the main console."""
+        self._reconciler.set_stream_logs(stream)
 
     def _auto_wait_for_value(self) -> str:
         wait_for = self._auto_wait_for or "start"
@@ -241,6 +253,8 @@ class Supervisor:
 def init_supervisor(
     verbosity: Verbosity | str = Verbosity.INFO,
     keep_running: bool = False,
+    log_folder: str = "/tmp/tinysup/log",
+    stream_logs: bool = True,
 ) -> Supervisor:
     """Create a new Supervisor."""
-    return Supervisor(verbosity, keep_running)
+    return Supervisor(verbosity, keep_running, log_folder, stream_logs)

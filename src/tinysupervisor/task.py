@@ -40,6 +40,7 @@ class Task:
     startretries: int = 3
     context: str | None = None
     env: dict[str, str] | None = None
+    stream_logs: bool | None = None
     observed: dict[str, int] = field(default_factory=dict, init=False, repr=False)
     observed_starts: dict[str, int] = field(
         default_factory=dict, init=False, repr=False
