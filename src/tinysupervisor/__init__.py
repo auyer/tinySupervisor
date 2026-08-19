@@ -1,6 +1,6 @@
 """tinySupervisor: a process supervisor with DAG-like dependencies."""
 
-from tinysupervisor.jobs import Job, CronJob
+from tinysupervisor.jobs import CronJob, Job, RecurrentJob
 from tinysupervisor.logger import Verbosity
 from tinysupervisor.process import Process
 from tinysupervisor.service import Service
@@ -13,6 +13,7 @@ __all__ = [
     "Job",
     "Process",
     "ProcessState",
+    "RecurrentJob",
     "Service",
     "Supervisor",
     "Verbosity",

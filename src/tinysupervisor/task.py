@@ -2,19 +2,12 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Any
+
+from tinysupervisor.policy import JobPolicy
 
 # str for external commands, callable for python functions
 Executable = str | Callable[..., Any]
-
-
-class DependencyMode(StrEnum):
-    """How a task waits on its dependencies."""
-
-    START = "start"
-    COMPLETED = "completed"
-    RUN_AFTER = "run_after"
 
 
 @dataclass(kw_only=True)
@@ -24,9 +17,14 @@ class Task:
     ``command`` and ``executable`` are aliases for the same underlying
     callable (a shell command string or a Python callable). Provide exactly
     one of them.
+
+    ``wait_for`` controls when dependencies are considered ready:
+    ``"start"`` (as soon as the dependency has started) or ``"completed"``
+    (once the dependency completes).
     """
 
     kind = "task"
+    policy = JobPolicy()
 
     name: str
     command: Executable | None = None
@@ -34,7 +32,7 @@ class Task:
     args: list[Any] = field(default_factory=list)
     kwargs: dict[str, Any] = field(default_factory=dict)
     depends: list[str] = field(default_factory=list)
-    dependency_mode: DependencyMode | str | None = None
+    wait_for: str = "completed"
     priority: int = 0
     autostart: bool = True
     autorestart: bool = False
@@ -43,12 +41,17 @@ class Task:
     context: str | None = None
     env: dict[str, str] | None = None
     observed: dict[str, int] = field(default_factory=dict, init=False, repr=False)
+    observed_starts: dict[str, int] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         if self.command is not None and self.executable is not None:
             raise ValueError("provide either 'command' or 'executable', not both")
-        if isinstance(self.dependency_mode, str) and self.dependency_mode is not None:
-            self.dependency_mode = DependencyMode(self.dependency_mode)
+        if self.wait_for not in ("start", "completed"):
+            raise ValueError(
+                f"wait_for must be 'start' or 'completed', got {self.wait_for!r}"
+            )
 
     @property
     def runnable(self) -> Executable | None:

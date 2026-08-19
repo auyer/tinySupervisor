@@ -8,8 +8,8 @@ It aims to be a simple way to define workflows to be easily included into a sing
 
 ## Features
 
-- **Task types**: Job (one-shot), CronJob (recurring), Service (long-running)
-- **DAG dependencies**: `start`, `completed`, `run_after` modes
+- **Task types**: Job (one-shot), CronJob (recurring), RecurrentJob (dependency-driven), Service (long-running)
+- **DAG dependencies**: `wait_for="start"` / `wait_for="completed"`
 - **Built-in observability**: `/health`, `/state`, `/metrics` HTTP endpoints
 - **Zero config**: single container friendly
 
@@ -47,7 +47,7 @@ def main() -> int:
             name="build",
             command="echo building",
             depends=["prepare"],
-            dependency_mode="completed",
+            wait_for="completed",
         )
     )
 
@@ -107,7 +107,7 @@ def main() -> int:
             run_until=3,
             command="echo beat",
             depends=["init"],
-            dependency_mode="completed",
+            wait_for="completed",
         )
     )
 
@@ -134,20 +134,19 @@ When a service exits unexpectedly the supervisor can optionally restart it
 
 ## Dependencies
 
-Tasks can depend on others. The `dependency_mode` controls *when* the dependent task starts:
+Tasks can depend on others. The `wait_for` parameter controls *when* the dependent task starts:
 
-| Mode | Meaning |
+| Value | Meaning |
 |---|---|
 | `start` | Start as soon as the dependency has started |
-| `completed` | Wait until the dependency completes |
-| `run_after` | Run every time the dependency runs |
+| `completed` | Wait until the dependency completes (default) |
 
 ```python
 # runnable: run_after
 import os
 import sys
 
-from tinysupervisor import Job, CronJob, init_supervisor
+from tinysupervisor import Job, CronJob, RecurrentJob, init_supervisor
 
 
 def main() -> int:
@@ -163,15 +162,14 @@ def main() -> int:
             run_until=2,
             command="echo tick",
             depends=["seed"],
-            dependency_mode="completed",
+            wait_for="completed",
         )
     )
     supervisor.register(
-        Job(
+        RecurrentJob(
             name="after_tick",
             command="echo after tick",
             depends=["tick"],
-            dependency_mode="run_after",
         )
     )
 
@@ -181,6 +179,10 @@ def main() -> int:
 if __name__ == "__main__":
     sys.exit(main())
 ```
+
+`RecurrentJob` runs every time its dependencies produce a new event (by default
+after each completed run), and completes once all of its dependencies complete.
+Set `trigger_mode="after_start"` to run whenever a dependency starts instead.
 
 You can also chain tasks automatically with `auto_dependency_mode`:
 

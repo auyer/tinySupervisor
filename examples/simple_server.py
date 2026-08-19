@@ -4,6 +4,7 @@ import sys
 from tinysupervisor import CronJob, Job, Process, Service, init_supervisor
 
 
+# generate an html list of files in the folder
 def render_index(file_names: list[str]) -> str:
     # Generate a <p> tag for each file name using a list comprehension
     lines_list = [
@@ -31,21 +32,28 @@ def render_index(file_names: list[str]) -> str:
     return base_html
 
 
+# helper to write a file to a folder
 def write(file_name: str, content: str):
     with open(file_name, "w", encoding="utf-8") as file:
         file.writelines(content)
 
 
+# list files in folder, render html and write it to file
 def index_folder_runner(folder_name):
     files = Process.run(f"ls {folder_name}")
     index = render_index(files)
     Process.run(write, args=["index.html", index])
 
 
+# build the "python simple http server" serving contents from the folder
 def server(folder_name):
     port = os.environ.get("TINYSUPERVISOR_SERVICE_PORT", "8080")
-    svc = Service.new(command=f"python3 -m http.server {port}", context=folder_name)
-    svc.start()
+    return Service.new(
+        command=f"python3 -m http.server {port}",
+        context=folder_name,
+        name="server",
+        depends=["init_folder"],
+    )
 
 
 def main() -> int:
@@ -61,20 +69,14 @@ def main() -> int:
             executable=index_folder_runner,
             kwargs={"folder_name": "output"},
             depends=["init_folder"],
-            dependency_mode="completed",
+            wait_for="completed",
         )
     )
     supervisor.register(
-        Service(
-            name="server",
-            executable=server,
-            kwargs={"folder_name": "output"},
-            depends=["init_folder"],
-            dependency_mode="completed",
-        )
+        server("output")  # register the http server service
     )
 
-    supervisor.set_heartbeat_interval("1m")  # default reconciler interval
+    supervisor.set_heartbeat_interval("10s")
 
     supervisor.set_http_port(
         int(os.environ.get("TINYSUPERVISOR_HTTP_PORT", "8081"))

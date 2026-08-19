@@ -2,13 +2,15 @@
 
 from typing import Any
 
-from tinysupervisor.task import DependencyMode, Executable, Task
+from tinysupervisor.policy import ServicePolicy
+from tinysupervisor.task import Executable, Task
 
 
 class Service(Task):
     """A long-running task that the supervisor keeps alive."""
 
     kind = "service"
+    policy = ServicePolicy()
 
     def __init__(
         self,
@@ -18,7 +20,7 @@ class Service(Task):
         args: list[Any] | None = None,
         kwargs: dict[str, Any] | None = None,
         depends: list[str] | None = None,
-        dependency_mode: DependencyMode | str | None = None,
+        wait_for: str = "completed",
         priority: int = 0,
         autostart: bool = True,
         autorestart: bool = False,
@@ -34,7 +36,7 @@ class Service(Task):
             args=args or [],
             kwargs=kwargs or {},
             depends=depends or [],
-            dependency_mode=dependency_mode,
+            wait_for=wait_for,
             priority=priority,
             autostart=autostart,
             autorestart=autorestart,
@@ -55,17 +57,3 @@ class Service(Task):
         """Create a service that runs ``command`` (optionally in ``context``)."""
         service_name = name or (command if isinstance(command, str) else "service")
         return cls(name=service_name, command=command, context=context, **kwargs)
-
-    def start(self) -> None:
-        """Imperatively run the service (blocking) without the supervisor registry."""
-        from tinysupervisor.process import Process
-
-        handle = Process(
-            runnable=self.runnable,
-            args=self.args,
-            kwargs=self.kwargs,
-            context=self.context,
-            env=self.env,
-        )
-        handle.start()
-        handle.wait()

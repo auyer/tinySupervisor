@@ -1,7 +1,7 @@
 import os
 import sys
 
-from tinysupervisor import CronJob, Job, init_supervisor
+from tinysupervisor import CronJob, Job, RecurrentJob, init_supervisor
 
 
 def main() -> int:
@@ -21,15 +21,14 @@ def main() -> int:
             run_until=os.environ.get("TINYSUPERVISOR_CRON_RUN_UNTIL", "10s"),
             command='echo "still running"',
             depends=["started_job"],
-            dependency_mode="completed",  # run after the dependency is completed
+            wait_for="completed",  # run after the dependency is completed
         )
     )
     supervisor.register(
-        Job(
+        RecurrentJob(
             name="confirmation",
             command='echo "beat confirmed"',
-            depends=["heart_beat"],
-            dependency_mode="run_after",  # run every time the CronJob executes
+            depends=["heart_beat"],  # run every time the CronJob executes
         )
     )
 
@@ -38,7 +37,7 @@ def main() -> int:
             name="done",
             command='echo "done"',
             depends=["heart_beat"],
-            dependency_mode="completed",  # only run after state is "completed"
+            wait_for="completed",  # only run after state is "completed"
         )
     )
 

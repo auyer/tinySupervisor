@@ -6,7 +6,6 @@ from threading import RLock
 from tinysupervisor.errors import DuplicateTaskError, UnknownDependencyError
 from tinysupervisor.graph import DependencyGraph
 from tinysupervisor.process import Process
-from tinysupervisor.scheduler import parse_duration
 from tinysupervisor.states import ProcessState
 from tinysupervisor.task import Task
 
@@ -18,6 +17,7 @@ class TaskEntry:
     task: Task
     state: ProcessState = ProcessState.WAITING
     run_count: int = 0
+    start_count: int = 0
     started: bool = False
     completed: bool = False
     handle: Process | None = None
@@ -60,17 +60,7 @@ class State:
             self._rebuild_graph()
 
     def _apply_schedule(self, task: Task, entry: TaskEntry) -> None:
-        if task.kind == "cron":
-            interval = getattr(task, "interval", None)
-            run_until = getattr(task, "run_until", None)
-            entry.interval_s = parse_duration(interval) if interval is not None else 1.0
-            if isinstance(run_until, int):
-                entry.run_until_count = run_until
-            elif isinstance(run_until, str):
-                if run_until.isdigit():
-                    entry.run_until_count = int(run_until)
-                else:
-                    entry.run_until_duration = parse_duration(run_until)
+        task.policy.apply_schedule(entry)
 
     def _rebuild_graph(self) -> None:
         depends = {name: self.entries[name].task.depends for name in self.order}

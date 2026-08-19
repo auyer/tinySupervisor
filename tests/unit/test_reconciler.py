@@ -1,12 +1,12 @@
 import time
 
-from tinysupervisor.job import Job
+from tinysupervisor.jobs import Job, RecurrentJob
 from tinysupervisor.logger import Logger, Verbosity
-from tinysupervisor.reconciler import Reconciler, dependencies_ready
+from tinysupervisor.policy import dependencies_ready
+from tinysupervisor.reconciler import Reconciler
 from tinysupervisor.service import Service
 from tinysupervisor.state import State, TaskEntry
 from tinysupervisor.states import ProcessState
-from tinysupervisor.task import DependencyMode
 
 
 def entry(
@@ -26,84 +26,97 @@ def test_no_deps_always_ready():
 
 
 def test_start_mode_ready_after_dep_started():
-    job = Job(
-        name="x", command="echo", depends=["a"], dependency_mode=DependencyMode.START
-    )
+    job = Job(name="x", command="echo", depends=["a"], wait_for="start")
     assert dependencies_ready(job, {"a": entry(started=True)}) is True
     assert dependencies_ready(job, {"a": entry(started=False)}) is False
 
 
 def test_completed_mode_ready_after_dep_completed():
-    job = Job(
-        name="x",
-        command="echo",
-        depends=["a"],
-        dependency_mode=DependencyMode.COMPLETED,
-    )
+    job = Job(name="x", command="echo", depends=["a"], wait_for="completed")
     assert dependencies_ready(job, {"a": entry(run_count=1, completed=True)}) is True
     assert dependencies_ready(job, {"a": entry(run_count=1, completed=False)}) is False
 
 
-def test_run_after_triggers_on_new_dep_run():
-    job = Job(
-        name="x",
-        command="echo",
-        depends=["a"],
-        dependency_mode=DependencyMode.RUN_AFTER,
-    )
-    job.observed["a"] = 1
-    assert dependencies_ready(job, {"a": entry(run_count=2)}) is True
-    assert dependencies_ready(job, {"a": entry(run_count=1)}) is False
+def test_invalid_wait_for_raises():
+    try:
+        Job(name="x", command="echo", wait_for="run_after")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for invalid wait_for")
 
 
-def test_run_after_job_completes_when_dep_completed():
+# -- RecurrentJob: repeating behaviour lives in the policy --------------------
+
+
+def test_recurrent_after_run_triggers_on_new_dep_run():
     state = State()
-    dep = Job(name="a", command="echo")
-    job = Job(
-        name="b",
-        command="echo",
-        depends=["a"],
-        dependency_mode=DependencyMode.RUN_AFTER,
-    )
-    state.add(dep)
+    state.add(Job(name="a", command="echo"))
+    job = RecurrentJob(name="b", command="echo", depends=["a"])
     state.add(job)
+    rec = Reconciler(state, Logger(Verbosity.SILENT))
+
+    with state.lock:
+        entry = state.entries["b"]
+        entry.task.observed["a"] = 1
+        state.entries["a"].run_count = 2
+        assert job.policy.should_start(entry, rec, 0.0) is True
+        state.entries["a"].run_count = 1
+        assert job.policy.should_start(entry, rec, 0.0) is False
+
+
+def test_recurrent_after_start_triggers_on_new_dep_start():
+    state = State()
+    state.add(Job(name="a", command="echo"))
+    job = RecurrentJob(
+        name="b", command="echo", depends=["a"], trigger_mode="after_start"
+    )
+    state.add(job)
+    rec = Reconciler(state, Logger(Verbosity.SILENT))
+
+    with state.lock:
+        entry = state.entries["b"]
+        entry.task.observed_starts["a"] = 1
+        state.entries["a"].start_count = 2
+        assert job.policy.should_start(entry, rec, 0.0) is True
+        state.entries["a"].start_count = 1
+        assert job.policy.should_start(entry, rec, 0.0) is False
+
+
+def test_recurrent_job_completes_when_dep_completed():
+    state = State()
+    state.add(Job(name="a", command="echo"))
+    job = RecurrentJob(name="b", command="echo", depends=["a"])
+    state.add(job)
+    rec = Reconciler(state, Logger(Verbosity.SILENT))
 
     with state.lock:
         state.entries["a"].completed = True
         state.entries["a"].run_count = 1
-        state.entries["b"].state = ProcessState.WAITING
-        state.entries["b"].run_count = 1
-        state.entries["b"].task.observed["a"] = 1
-
-    rec = Reconciler(state, Logger(Verbosity.SILENT))
-    with state.lock:
-        rec._reconcile_job(state.entries["b"], 0.0)
-        assert state.entries["b"].state is ProcessState.COMPLETED
-        assert state.entries["b"].completed is True
+        entry = state.entries["b"]
+        entry.state = ProcessState.WAITING
+        entry.run_count = 1
+        entry.task.observed["a"] = 1
+        job.policy.reconcile(entry, rec, 0.0)
+        assert entry.state is ProcessState.COMPLETED
+        assert entry.completed is True
 
 
-def test_run_after_job_stays_waiting_when_dep_not_completed():
+def test_recurrent_job_stays_waiting_when_dep_not_completed():
     state = State()
-    dep = Job(name="a", command="echo")
-    job = Job(
-        name="b",
-        command="echo",
-        depends=["a"],
-        dependency_mode=DependencyMode.RUN_AFTER,
-    )
-    state.add(dep)
+    state.add(Job(name="a", command="echo"))
+    job = RecurrentJob(name="b", command="echo", depends=["a"])
     state.add(job)
+    rec = Reconciler(state, Logger(Verbosity.SILENT))
 
     with state.lock:
         state.entries["a"].run_count = 1
-        state.entries["b"].state = ProcessState.WAITING
-        state.entries["b"].run_count = 1
-        state.entries["b"].task.observed["a"] = 1
-
-    rec = Reconciler(state, Logger(Verbosity.SILENT))
-    with state.lock:
-        rec._reconcile_job(state.entries["b"], 0.0)
-        assert state.entries["b"].state is ProcessState.WAITING
+        entry = state.entries["b"]
+        entry.state = ProcessState.WAITING
+        entry.run_count = 1
+        entry.task.observed["a"] = 1
+        job.policy.reconcile(entry, rec, 0.0)
+        assert entry.state is ProcessState.WAITING
 
 
 # -- WAITING -> FATAL when dependency fails ----------------------------------
@@ -118,7 +131,7 @@ def test_waiting_job_fails_when_upstream_fatal():
             name="down",
             command="echo",
             depends=["up"],
-            dependency_mode=DependencyMode.COMPLETED,
+            wait_for="completed",
         )
     )
 
@@ -128,7 +141,8 @@ def test_waiting_job_fails_when_upstream_fatal():
 
     rec = Reconciler(state, Logger(Verbosity.SILENT))
     with state.lock:
-        rec._reconcile_job(state.entries["down"], 0.0)
+        entry = state.entries["down"]
+        entry.task.policy.reconcile(entry, rec, 0.0)
 
     with state.lock:
         assert state.entries["down"].state is ProcessState.FATAL
@@ -143,7 +157,7 @@ def test_waiting_job_fails_when_upstream_fatal_reconcile_loop():
             name="down",
             command="echo",
             depends=["up"],
-            dependency_mode=DependencyMode.COMPLETED,
+            wait_for="completed",
         )
     )
 
@@ -170,7 +184,7 @@ def test_waiting_service_fails_when_upstream_fatal():
             name="down",
             command="echo",
             depends=["up"],
-            dependency_mode=DependencyMode.COMPLETED,
+            wait_for="completed",
         )
     )
 
@@ -197,7 +211,7 @@ def test_waiting_job_stays_waiting_while_upstream_running():
             name="down",
             command="echo",
             depends=["up"],
-            dependency_mode=DependencyMode.COMPLETED,
+            wait_for="completed",
         )
     )
 

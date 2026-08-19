@@ -15,7 +15,7 @@ from tinysupervisor.scheduler import parse_duration
 from tinysupervisor.service import Service
 from tinysupervisor.state import State
 from tinysupervisor.states import ProcessState
-from tinysupervisor.task import DependencyMode, Task
+from tinysupervisor.task import Task
 
 _SHUTDOWN_TIMEOUT = 15.0
 
@@ -69,7 +69,7 @@ class Supervisor:
             and self._state.last_registered is not None
         ):
             task.depends = [self._state.last_registered]
-            task.dependency_mode = self._auto_dependency_mode()
+            task.wait_for = self._auto_wait_for_value()
 
         self._state.add(task)
         return task
@@ -89,11 +89,11 @@ class Supervisor:
         """Set the HTTP server port."""
         self._http_port = port
 
-    def _auto_dependency_mode(self) -> DependencyMode:
+    def _auto_wait_for_value(self) -> str:
         wait_for = self._auto_wait_for or "start"
         if wait_for in ("completed", "complete"):
-            return DependencyMode.COMPLETED
-        return DependencyMode.START
+            return "completed"
+        return "start"
 
     # -- introspection ----------------------------------------------------
 
@@ -130,8 +130,7 @@ class Supervisor:
             edges: list[dict[str, str]] = []
             for name in self._state.order:
                 task = self._state.entries[name].task
-                raw = task.dependency_mode or DependencyMode.COMPLETED
-                mode = raw.value if isinstance(raw, DependencyMode) else raw
+                mode = task.policy.edge_mode(task)
                 for dep in task.depends:
                     edges.append({"from": dep, "to": name, "mode": mode})
             return {"nodes": nodes, "edges": edges}

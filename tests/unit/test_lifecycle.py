@@ -1,4 +1,4 @@
-from tinysupervisor.job import Job
+from tinysupervisor.jobs import Job
 from tinysupervisor.logger import Verbosity
 from tinysupervisor.states import ProcessState
 from tinysupervisor.supervisor import Supervisor

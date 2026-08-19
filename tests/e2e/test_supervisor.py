@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from tests.helpers import wait_until
-from tinysupervisor import CronJob, Job, Service, init_supervisor
+from tinysupervisor import CronJob, Job, RecurrentJob, Service, init_supervisor
 from tinysupervisor.states import ProcessState
 
 EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "examples"
@@ -144,7 +144,7 @@ def test_dependency_completed_ordering():
             name="second",
             command="echo done",
             depends=["first"],
-            dependency_mode="completed",
+            wait_for="completed",
         )
     )
 
@@ -336,15 +336,14 @@ def test_simple_dag_cron_completed_dependency():
             run_until=3,
             command='echo "still running"',
             depends=["started_job"],
-            dependency_mode="completed",
+            wait_for="completed",
         )
     )
     sup.register(
-        Job(
+        RecurrentJob(
             name="confirmation",
             command='echo "beat confirmed"',
             depends=["heart_beat"],
-            dependency_mode="run_after",
         )
     )
     sup.register(
@@ -352,7 +351,7 @@ def test_simple_dag_cron_completed_dependency():
             name="done",
             command='echo "done"',
             depends=["heart_beat"],
-            dependency_mode="completed",
+            wait_for="completed",
         )
     )
 
