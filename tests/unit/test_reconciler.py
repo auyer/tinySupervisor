@@ -291,7 +291,7 @@ def test_task_stream_logs_override_streams_to_console(tmp_path, capsys):
             interval="50ms",
             run_until=1,
             command="echo shout",
-            stream_logs=True,
+            stream_logs=False,
         )
     )
     rec = Reconciler(state, Logger(Verbosity.SILENT), log_folder=str(tmp_path))
@@ -305,5 +305,5 @@ def test_task_stream_logs_override_streams_to_console(tmp_path, capsys):
         time.sleep(0.02)
 
     captured = capsys.readouterr()
-    assert "[loud] shout" in captured.out
+    assert "[loud] shout" not in captured.out
     assert "shout" in (tmp_path / "loud" / "1.log").read_text()

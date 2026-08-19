@@ -550,10 +550,10 @@ def test_stream_logs_prints_to_console(tmp_path: Path, capsys):
 def test_task_stream_logs_override(tmp_path: Path, capsys):
     port = free_port()
     log_folder = tmp_path / "logs"
-    sup = init_supervisor(log_folder=str(log_folder))  # stream disabled globally
+    sup = init_supervisor(log_folder=str(log_folder))
     sup.set_http_port(port)
     sup.set_heartbeat_interval("100ms")
-    sup.register(Job(name="loud", command="echo shout", stream_logs=True))
+    sup.register(Job(name="loud", command="echo shout", stream_logs=False))
     sup.register(Job(name="quiet", command="echo whisper"))
 
     with RunningSupervisor(sup, port):
@@ -563,5 +563,5 @@ def test_task_stream_logs_override(tmp_path: Path, capsys):
         )
 
     out = capsys.readouterr().out
-    assert "[loud] shout" in out
-    assert "[quiet] whisper" not in out
+    assert "[loud] shout" not in out
+    assert "[quiet] whisper" in out

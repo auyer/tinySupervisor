@@ -23,7 +23,7 @@ def test_info_shows_info_not_debug(capsys):
         Verbosity.INFO,
         [("info", "started"), ("debug", "transition")],
     )
-    assert "[tinysupervisor] started" in output
+    assert "[tinysup] started" in output
     assert "transition" not in output
 
 
@@ -33,8 +33,8 @@ def test_debug_shows_both(capsys):
         Verbosity.DEBUG,
         [("info", "started"), ("debug", "transition")],
     )
-    assert "[tinysupervisor] started" in output
-    assert "[tinysupervisor] transition" in output
+    assert "[tinysup] started" in output
+    assert "[tinysup] transition" in output
 
 
 def test_string_alias():
@@ -55,7 +55,7 @@ def test_prefix_present(capsys):
     Logger(Verbosity.SILENT).info("x")
     Logger(Verbosity.DEBUG).debug("y")
     out = capsys.readouterr().out
-    assert "[tinysupervisor] y" in out
+    assert "[tinysup] y" in out
 
 
 def test_info_and_debug_use_correct_levels(capsys):
@@ -65,5 +65,5 @@ def test_info_and_debug_use_correct_levels(capsys):
     out = capsys.readouterr().out
     lines = out.strip().splitlines()
     assert len(lines) == 2
-    assert lines[0] == "[tinysupervisor] info-msg"
-    assert lines[1] == "[tinysupervisor] debug-msg"
+    assert lines[0] == "[tinysup] info-msg"
+    assert lines[1] == "[tinysup] debug-msg"
