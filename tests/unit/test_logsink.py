@@ -3,6 +3,7 @@ import io
 import sys
 
 from tinysupervisor.logsink import LogSink
+from tinysupervisor.stdout import _STDOUT_ROUTER, capture_sink
 
 
 def test_writes_to_file_and_creates_dirs(tmp_path):
@@ -121,6 +122,22 @@ def test_console_is_not_a_log_sink(tmp_path):
     assert not isinstance(sink._console, LogSink)
     sibling.close()
     sink.close()
+
+
+def test_console_is_not_the_redirection_router(tmp_path, monkeypatch):
+    fallback = io.StringIO()
+    monkeypatch.setattr(sys, "__stdout__", fallback)
+    holder = LogSink(tmp_path / "holder.log")
+    with capture_sink(holder):  # sys.stdout is now the redirection router
+        sink = LogSink(tmp_path / "s.log", prefix="t", stream=True)
+
+    assert sink._console is not _STDOUT_ROUTER
+    sink.write("hi\n")
+    sink.close()
+
+    assert tmp_path.joinpath("s.log").read_text() == "hi\n"
+    assert "[t] hi\n" in fallback.getvalue()
+    holder.close()
 
 
 def test_emit_does_not_crash_when_console_closed(tmp_path, monkeypatch):

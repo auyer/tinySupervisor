@@ -1,3 +1,4 @@
+import io
 import os
 import sys
 import threading
@@ -8,6 +9,7 @@ import pytest
 from tinysupervisor.errors import ProcessError
 from tinysupervisor.logsink import LogSink
 from tinysupervisor.process import Process
+from tinysupervisor.stdout import capture_sink
 
 
 def test_run_command_returns_stdout_lines():
@@ -242,3 +244,22 @@ def test_failing_sink_does_not_orphan_subprocess():
 
     assert proc.exitcode() is not None
     assert sink.closed is True
+
+
+def test_callable_sink_built_during_capture_does_not_recurse(tmp_path, monkeypatch):
+    fallback = io.StringIO()
+    monkeypatch.setattr(sys, "__stdout__", fallback)
+    holder = LogSink(tmp_path / "holder.log")
+    with capture_sink(holder):  # sys.stdout is now the redirection router
+        sink_b = LogSink(tmp_path / "b.log", prefix="b", stream=True)
+
+    def speak():
+        print("hello")
+
+    proc = Process(speak)
+    proc.start(sink=sink_b)
+    proc.wait(timeout=5)
+
+    assert tmp_path.joinpath("b.log").read_text() == "hello\n"
+    assert "[b] hello\n" in fallback.getvalue()
+    holder.close()

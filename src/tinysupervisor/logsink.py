@@ -9,18 +9,22 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from tinysupervisor.stdout import is_proxy_stream
+
 
 def _console_stream() -> Any:
     """Return the stream to echo task output to.
 
-    ``contextlib.redirect_stdout`` swaps the process-global ``sys.stdout`` for
-    the whole process, so it can be a ``LogSink`` belonging to a *different*
-    task.  Never capture that: echo to a sibling sink would recurse into it and
-    crash once it is closed.  Otherwise keep whatever ``sys.stdout`` is (e.g. a
-    test capture object) so echo still lands where the caller expects.
+    ``sys.stdout`` is swapped process-globally while a callable task is being
+    captured, so it can be a ``LogSink`` or a redirection proxy (the ``_Router``)
+    belonging to a *different* task.  Never capture either: echo to a sibling
+    sink would recurse into it (and crash once it is closed), and echoing into
+    the router would dispatch back into the current thread's sink -- an
+    infinite loop.  Otherwise keep whatever ``sys.stdout`` is (e.g. a test
+    capture object) so echo still lands where the caller expects.
     """
     console = sys.stdout
-    if isinstance(console, LogSink):
+    if isinstance(console, LogSink) or is_proxy_stream(console):
         console = sys.__stdout__ if sys.__stdout__ is not None else sys.stderr
     return console
 
