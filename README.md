@@ -268,9 +268,9 @@ Job(name="quiet", command="echo whisper")  # follows the global default
 ```
 
 Both shell commands (stdout and stderr) and Python callables (`print` to
-stdout/stderr) are captured. Note that stdout capture for callables redirects
-the process-global `sys.stdout`, so two concurrent callable tasks printing at
-once may interleave their console output (their log files stay separate).
+stdout/stderr) are captured. Callable output is captured per-thread, so
+concurrent callable tasks will have overlapping logs in the console, where each line carries its task prefix.
+But they also write to their own log files.
 
 ## Observability
 
