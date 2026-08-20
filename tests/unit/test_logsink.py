@@ -1,3 +1,7 @@
+import contextlib
+import io
+import sys
+
 from tinysupervisor.logsink import LogSink
 
 
@@ -92,3 +96,43 @@ def test_close_is_idempotent(tmp_path):
     sink.close()
     sink.close()
     assert sink.closed is True
+
+
+def test_console_not_captured_as_sibling_sink(tmp_path, monkeypatch):
+    fallback = io.StringIO()
+    monkeypatch.setattr(sys, "__stdout__", fallback)
+    sibling = LogSink(tmp_path / "c.log", prefix="callable", stream=True)
+    with contextlib.redirect_stdout(sibling):
+        sink = LogSink(tmp_path / "s.log", prefix="shell", stream=True)
+    sibling.close()
+
+    sink.write("shell-late\n")
+    sink.close()
+
+    assert tmp_path.joinpath("s.log").read_text() == "shell-late\n"
+    assert "[shell] shell-late\n" in fallback.getvalue()
+
+
+def test_console_is_not_a_log_sink(tmp_path):
+    sibling = LogSink(tmp_path / "c.log")
+    with contextlib.redirect_stdout(sibling):
+        sink = LogSink(tmp_path / "s.log", prefix="t", stream=True)
+
+    assert not isinstance(sink._console, LogSink)
+    sibling.close()
+    sink.close()
+
+
+def test_emit_does_not_crash_when_console_closed(tmp_path, monkeypatch):
+    fallback = io.StringIO()
+    monkeypatch.setattr(sys, "__stdout__", fallback)
+    sink = LogSink(tmp_path / "s.log", prefix="shell", stream=True)
+    sibling = LogSink(tmp_path / "c.log")
+    sink._console = sibling
+    sibling.close()
+
+    sink.write("late line\n")
+    sink.close()
+
+    assert tmp_path.joinpath("s.log").read_text() == "late line\n"
+    assert "[shell] late line\n" in fallback.getvalue()

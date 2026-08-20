@@ -1,5 +1,7 @@
 import os
 import sys
+import threading
+from typing import cast
 
 import pytest
 
@@ -199,3 +201,44 @@ def test_start_without_sink_keeps_callable_exitcode_zero():
     proc.start()
     proc.wait(timeout=5)
     assert proc.exitcode() == 0
+
+
+def test_concurrent_callables_capture_separate_files(tmp_path):
+    sink_a = LogSink(tmp_path / "a.log")
+    sink_b = LogSink(tmp_path / "b.log")
+    barrier = threading.Barrier(2)
+
+    def speak(label):
+        barrier.wait(timeout=5)
+        for _ in range(20):
+            print(label, flush=True)
+
+    proc_a = Process(speak, args=["A"])
+    proc_b = Process(speak, args=["B"])
+    proc_a.start(sink=sink_a)
+    proc_b.start(sink=sink_b)
+    proc_a.wait(timeout=5)
+    proc_b.wait(timeout=5)
+
+    assert tmp_path.joinpath("a.log").read_text() == "A\n" * 20
+    assert tmp_path.joinpath("b.log").read_text() == "B\n" * 20
+
+
+def test_failing_sink_does_not_orphan_subprocess():
+    class BrokenSink:
+        def __init__(self):
+            self.closed = False
+
+        def write(self, text):
+            raise ValueError("boom")
+
+        def close(self):
+            self.closed = True
+
+    sink = BrokenSink()
+    proc = Process("sleep 0.2 && echo hi")
+    proc.start(sink=cast(LogSink, sink))
+    proc.wait(timeout=5)
+
+    assert proc.exitcode() is not None
+    assert sink.closed is True

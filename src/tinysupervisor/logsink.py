@@ -7,6 +7,22 @@ mirrors it to the main console, prefixing each line with the task name.
 import io
 import sys
 from pathlib import Path
+from typing import Any
+
+
+def _console_stream() -> Any:
+    """Return the stream to echo task output to.
+
+    ``contextlib.redirect_stdout`` swaps the process-global ``sys.stdout`` for
+    the whole process, so it can be a ``LogSink`` belonging to a *different*
+    task.  Never capture that: echo to a sibling sink would recurse into it and
+    crash once it is closed.  Otherwise keep whatever ``sys.stdout`` is (e.g. a
+    test capture object) so echo still lands where the caller expects.
+    """
+    console = sys.stdout
+    if isinstance(console, LogSink):
+        console = sys.__stdout__ if sys.__stdout__ is not None else sys.stderr
+    return console
 
 
 class LogSink(io.TextIOBase):
@@ -31,7 +47,7 @@ class LogSink(io.TextIOBase):
         self.path = Path(path)
         self.prefix = prefix
         self.stream = stream
-        self._console = sys.stdout
+        self._console = _console_stream()
         self._file = None
         self._buffer = ""
         self._open()
@@ -59,7 +75,14 @@ class LogSink(io.TextIOBase):
         if not line:
             return
         prefix = f"[{self.prefix}] " if self.prefix else ""
-        self._console.write(f"{prefix}{line}\n")
+        text = f"{prefix}{line}\n"
+        try:
+            self._console.write(text)
+        except ValueError, OSError:
+            # Stale or closed console (e.g. a sibling sink that was closed).
+            # Fall back to the real stdout rather than crashing the reader thread.
+            if sys.__stdout__ is not None:
+                sys.__stdout__.write(text)
 
     def flush(self) -> None:
         if self._file is not None:
